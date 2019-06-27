@@ -73,6 +73,7 @@ Mxt=[0    S(3)  -S(2) ;
 
 if bAxialCorr
     % --- Variables for axial correction
+    % FT=fcumtrapzlr(s_span,m);
     FT = - fliplr( cumtrapz( fliplr(s_span), fliplr(m)) ) ;
 
     if isempty(V_tot); error('Please provide Vtot for axial correction'); end

@@ -15,9 +15,10 @@ bBld=1;
 bInit=1;     %1  <<No Init to give mass matrix
 nB=2;            %2 
 
-nDOF=4;
+nDOF=1+nShapes_twr+nShapes_bld*nB;
 if bInit
-    q(1:4)=1; % initial conditions
+    q=zeros(nDOF,1);
+    q(1:nDOF)=1; % initial conditions
 else
     q=zeros(nDOF,1);
 end

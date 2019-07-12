@@ -190,7 +190,8 @@ methods
                 o.bAxialCorr=false;
             case 'FlexibleBeam'
                 % INPUTS REQUIRED FOR FLEXIBLE BODY
-                o.check_not_empty('s_span','m','PhiU');
+                %o.check_not_empty('s_span','m','PhiU');
+                o.check_not_empty('s_span','m')
                 if isempty(o.EIy) && isempty(o.EIz); error('Provide at least EIy or EIZ'); end;
                 % Useful variables
                 o.nf = length(o.PhiU);
@@ -209,15 +210,17 @@ methods
                     o.s_P0(3,:)=0;
                 end
                 % If V&K not provided, num computation, otherwise check their values
-                [o.PhiV,o.PhiK] = fBeamSlopeCurvature(o.s_span,o.PhiU,o.PhiV,o.PhiK,1e-2);
-                [o.V0,o.K0]     = fBeamSlopeCurvature(o.s_span,o.s_P0,o.V0,o.K0,1e-2)    ;
-                if isempty(o.s_G0); o.s_G0=o.s_P0; end;
-                if isempty(o.rho_G0_inS); o.rho_G0_inS=zeros(3,o.nSpan); end;
-                if isempty(o.rho_G0    ); 
-                    o.rho_G0 =zeros(3,o.nSpan);
-                    for i=1:o.nSpan
-                        o.rho_G0(1:3,i) =fRotx(o.V0(1,i))*o.rho_G0_inS(:,i);
-                    end;
+                if o.nf>0
+                    [o.PhiV,o.PhiK] = fBeamSlopeCurvature(o.s_span,o.PhiU,o.PhiV,o.PhiK,1e-2);
+                    [o.V0,o.K0]     = fBeamSlopeCurvature(o.s_span,o.s_P0,o.V0,o.K0,1e-2)    ;
+                    if isempty(o.s_G0); o.s_G0=o.s_P0; end;
+                    if isempty(o.rho_G0_inS); o.rho_G0_inS=zeros(3,o.nSpan); end;
+                    if isempty(o.rho_G0    ); 
+                        o.rho_G0 =zeros(3,o.nSpan);
+                        for i=1:o.nSpan
+                            o.rho_G0(1:3,i) =fRotx(o.V0(1,i))*o.rho_G0_inS(:,i);
+                        end;
+                    end
                 end
                 % --- Sanity
                 o.line_vector_me('s_span','m','EIy','EIz','GKt','jxxG');
@@ -268,7 +271,7 @@ methods
         o.gzppf       = a_v_inB(6+(1:o.nf))  ;
 
         % --- Calculation of deformations wrt straight beam axis, curvature (K) and velocities (UP)
-        if isequal(o.Type,'FlexibleBeam')
+        if isequal(o.Type,'FlexibleBeam') && o.nf>0
             % Deflections shape
             o.U  = zeros(3,o.nSpan);
             o.V  = zeros(3,o.nSpan);
@@ -404,10 +407,11 @@ methods
 
     function o=computeShapeIntegrals(o)
         % Compute the shape integral
-        %
         if ~isempty(o.sigma); warning('Recomputing shape integrals. Not necessary'); end
-        if isempty(o.PhiV); error('PhiV shoud have been set by procedure init. Did you call it?'); end
-        if isempty(o.PhiK); error('PhiK shoud have been set by procedure init. Did you call it?'); end
+        if o.nf>0
+            if isempty(o.PhiV); error('PhiV shoud have been set by procedure init. Did you call it?'); end
+            if isempty(o.PhiK); error('PhiK shoud have been set by procedure init. Did you call it?'); end
+        end
 
         % NOTE: using IW_xm will change the results a bit for Mtt and Mtg
         [o.Psi,o.Upsilon_kl,o.Sigma_kl,o.sigma_kl,o.sigma,o.Mass,o.ImomX,o.I_Jxx,o.GM_Jxx,o.M1] = ...
@@ -656,8 +660,10 @@ methods
             i.R_pb = R_pi ;
             i.updateKinematics(r_0i,R_0i,gz,v_i_in0,a_i_v_in0)
             if ~isequal(i.Type,'Rigid')
-                i.computeMassMatrix(); % Triggers 
-                i.computeInertiaForces();
+                if i.nf>0
+                    i.computeMassMatrix(); % Triggers 
+                    i.computeInertiaForces();
+                end
             end
 %             nf_N=0;
 %             BB_N_inN =[B_N_inN zeros(6,nf_N) ; zeros(nf_N, size(B_N_inN,2)) eye(nf_N)];
@@ -703,12 +709,14 @@ methods
     function checkModesOrthogonality(o)
         nModes=length(o.PhiU);
         ModeOrth=zeros(nModes,nModes);
-        for j=1:nModes
-            for i=j:nModes
-                ModeOrth(i,j)=trapz(o.s_span,o.PhiU{i}(1,:).*o.PhiU{j}(1,:)+ o.PhiU{i}(2,:).*o.PhiU{j}(2,:)+ o.PhiU{i}(3,:).*o.PhiU{j}(3,:));
+        if nModes>0
+            for j=1:nModes
+                for i=j:nModes
+                    ModeOrth(i,j)=trapz(o.s_span,o.PhiU{i}(1,:).*o.PhiU{j}(1,:)+ o.PhiU{i}(2,:).*o.PhiU{j}(2,:)+ o.PhiU{i}(3,:).*o.PhiU{j}(3,:));
+                end
             end
+            Cross=triu(ModeOrth,1);
         end
-        Cross=triu(ModeOrth,1);
         %fprintf('ModeOrth: max %.2e   avg %.2e\n',max(Cross(:)),mean(Cross(:)));
     end
 

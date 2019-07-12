@@ -39,6 +39,9 @@ bStiffening=(p.bStiffeningMtop & ~isempty(p.Mtop)) | (p.bStiffeningSelfWeight & 
 % --- Init
 KK0 = zeros(6+nf,6+nf);
 KKg = zeros(6+nf,6+nf);
+if nf==0
+    return
+end
 
 % --------------------------------------------------------------------------------}
 %% --- Stiffening  

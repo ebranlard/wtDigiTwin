@@ -178,7 +178,9 @@ function [Psi,Upsilon_kl,Sigma_kl,sigma_kl,sigma,Mass,Jxx,I_Jxx,GMJxx,M1] = fSha
 
     % --- Axial correction (line 1 or mass matrix)
     if p.bAxialCorr
-        if isempty(p.V0);  error('Provide V0 for axial corr'); end;
+        if nf>0
+            if isempty(p.V0);  error('Provide V0 for axial corr'); end;
+        end
         % --- Variable required for line 1 (axial correction)
         % FXG from axial acceleration AX = 1 
         FXG=fcumtrapzlr(s_span,m);
@@ -215,8 +217,13 @@ function [Psi,Upsilon_kl,Sigma_kl,sigma_kl,sigma,Mass,Jxx,I_Jxx,GMJxx,M1] = fSha
         end
         %GMVa5p=sum(IW_x.*PACCzp);
         %GMVa6p=sum(IW_x.*PACCyp);
-        M1.m15p=-trapz(s_span, p.V0(3,:).*FXG);
-        M1.m16p=-trapz(s_span, p.V0(2,:).*FXG);
+        if nf>0
+            M1.m15p=-trapz(s_span, p.V0(3,:).*FXG);
+            M1.m16p=-trapz(s_span, p.V0(2,:).*FXG);
+        else
+            M1.m15p=0;
+            M1.m16p=0;
+        end
     else
         M1=[];
     end

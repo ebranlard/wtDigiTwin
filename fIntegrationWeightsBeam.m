@@ -11,12 +11,14 @@ s_span = s_span(:)';
 m      = m(:)';
 
 % Usefull variables
-nf    = length(PhiU)  ;
+nf    = length(PhiU);  
 nSpan = length(s_span);
 
 % Making sure modes have the proper dimensions
-if size(PhiU{1},1)~=3     ;  error('The cells in PhiU need to be 3 x n');end;
-if size(PhiU{1},2)~=nSpan ;  error('The dimension of PhiU needs to consistent with s_span');end;
+if nf>1
+    if size(PhiU{1},1)~=3     ;  error('The cells in PhiU need to be 3 x n');end;
+    if size(PhiU{1},2)~=nSpan ;  error('The dimension of PhiU needs to consistent with s_span');end;
+end
 if length(m)~=nSpan       ;  error('The length of m needs to be consistent with s_span');end;
 
 % --- Span Integration weights  IW and IW_x 

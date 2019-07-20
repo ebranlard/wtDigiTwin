@@ -16,13 +16,20 @@ if nargin==0
     rho = 7850                     ;
     Ip = pi/32*(D^4-(D-2*t)^4); % Polar second moment of area [m^4]
     Kt = pi/64*(D^4-(D-2*t)^4); % Torsion constant
-    [freq,x,U,p] = fUniformBeamTheoryTorsion('torsion-unloaded-clamped-free',G,Kt,Ip,rho,A,L,'norm','90deg');
+    [freq,x,V,~] = fUniformBeamTheoryTorsion('torsion-unloaded-clamped-free',G,Kt,Ip,rho,A,L,'norm','tip_norm');
     nModesPlot=4;
     close all;
     figure,hold all;box on;
     for i=1:nModesPlot 
-        plot(x,U(i,:))
+        plot(x,V(i,:))
     end
+    for i=1:nModesPlot 
+        fprintf('Mode %d f=%.8f \n',i,freq(i))
+    end
+    for i=1:nModesPlot 
+        fprintf('Mode %d vmid=%.8f \n',i,V(i,51))
+    end
+
     legds=arrayfun(@(i,f)sprintf('Mode %d f=%4.1f',i,f),1:nModesPlot,freq(1:nModesPlot),'UniformOutput',false);
     legend(legds);
     return
@@ -38,7 +45,7 @@ p.parse(varargin{:});
 p=p.Results;
 %
 if isempty(p.x)
-    x= linspace(0,L,100);
+    x= linspace(0,L,101);
 else
     x=p.x;
     if max(x)~=L; error('Max of x should be equal to L'); end;

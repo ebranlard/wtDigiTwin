@@ -11,8 +11,25 @@ if nargin==0
     L  = 100                  ;
     EI = 1.868211939147334e+12;
     m  = 8.828201296825122e+03;
-    [~,x,U,~,~,~,~] = fUniformBeamTheory('transverse-unloaded-clamped-free',EI,m,1,L,'norm','tip_norm');
-    figure, plot(x,U(1,:))
+    [freq,x,U,V,K,~,~] = fUniformBeamTheory('transverse-unloaded-clamped-free',EI,m,1,L,'norm','tip_norm','x',x);
+    nModesPlot=6;
+    close all;
+    figure,hold all;box on;
+    for i=1:nModesPlot 
+        fprintf('Mode %d f=%.8f \n',i,freq(i))
+        plot(x,U(i,:))
+    end
+    for i=1:nModesPlot 
+        fprintf('Mode %d umid=%.8f \n',i,U(i,51))
+    end
+    for i=1:nModesPlot 
+        fprintf('Mode %d vmid=%.8f \n',i,V(i,51))
+    end
+    for i=1:nModesPlot 
+        fprintf('Mode %d kmid=%.8f \n',i,K(i,51))
+    end
+    legds=arrayfun(@(i,f)sprintf('Mode %d f=%4.1f',i,f),1:nModesPlot,freq(1:nModesPlot),'UniformOutput',false);
+    legend(legds);
     return
 end
 
@@ -28,7 +45,7 @@ parse(p,varargin{:});
 p=p.Results;
 %
 if isempty(p.x)
-    x= linspace(0,L,100);
+    x= linspace(0,L,101);
 else
     x=p.x;
     if max(x)~=L; error('Max of x should be equal to L'); end;

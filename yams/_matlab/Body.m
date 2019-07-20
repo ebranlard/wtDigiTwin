@@ -116,11 +116,11 @@ properties
     Smom;
     Imom;
     Smom1;
-    IW;    % Span Integration Weight  
-    IW_x;  % Span Integration Weight
-    IW_m;  % Mass Integration Weight
-    IW_xm; % Mass Integration Weight
-    IW_U;  % Shape function Integration Weight 
+    IW;    % Span Integration Weight  "GFT"
+    IW_x;  % Span Integration Weight  "GFR"
+    IW_m;  % Mass Integration Weight  "GFTM"
+    IW_xm; % Mass Integration Weight  "GFRM"
+    IW_U;  % Shape function Integration Weight "GFW|
 
 end
 properties(SetAccess = private, Hidden = true)
@@ -360,6 +360,12 @@ methods
         o.KK(7:end,7:end)= o.KK0(7:end,7:end)+KKCorr*0;
 
         o.P_inertia = o.P_inertia + Corr;
+
+        %for I=1:nSpan
+        %    PEdge[I]=PYExternal(i)+ACY(i)*M(i)+Fx(i)*KK(i)-M(i)*ACX(i)*VEdge(i);
+        %    PFlap(i)=PZExternal(i)+ACZ(i)*M(i)+Fx(i)*KF(i)-M(i)*ACX(i)*VFlap(i);
+        %end;
+
     end
 
 
@@ -382,7 +388,7 @@ methods
           o.GF(2)=o.GF(2)+o.IW(I)*PK;
           o.GF(3)=o.GF(3)+o.IW(I)*PF;
           % Moments
-          %GF(4)=// Add torsional moment
+          %GF(4)=o.GF(4)+o.IW(I)*(MP(I)+UEdge(I)*PFlap(I)-UFlap(I)*PEdge(I)); // TODO  Add torsional moment
           o.GF(5)=o.GF(5)-o.IW_x(1,I)*PF;
           o.GF(6)=o.GF(6)+o.IW_x(1,I)*PK;
       end;
@@ -425,10 +431,15 @@ methods
                 % NOTE: function of gzf!
                 o.MM = fGMRigidBody(o.Mass,o.J_O_inB,o.s_G_inB);
             case 'FlexibleBeam'
-                if o.bUseShapeIntegrals
-                    o.MM = fGMBeamShapeIntegrals(o.gzf,o.Psi,o.Upsilon_kl,o.Sigma_kl,o.sigma_kl,o.sigma,o.Mass,o.ImomX,o.I_Jxx,o.GM_Jxx,o.bOrthogonal,o.bAxialCorr,o.M1);
+                if o.bCompatibility
+                    % Not using shape integrals since this is not the desired behavior..
+                    o.MM = fGMBeamCompatibility(o.gzf,o.s_G0,o.s_P,o.rho_G0,o.s_span,o.m,o.jxxG,o.PhiUG,o.PhiV,o.V_tot,'DirectIntegration_UG_G_d0');
                 else
-                    o.MM = fGMBeamStandalone     (o.s_G  ,o.s_span,o.m,o.jxxG,o.PhiUG,o.PhiV,o.IW,o.IW_xm,o.bOrthogonal,o.bAxialCorr,o.V_tot);
+                    if o.bUseShapeIntegrals
+                        o.MM = fGMBeamShapeIntegrals(o.gzf,o.Psi,o.Upsilon_kl,o.Sigma_kl,o.sigma_kl,o.sigma,o.Mass,o.ImomX,o.I_Jxx,o.GM_Jxx,o.bOrthogonal,o.bAxialCorr,o.M1);
+                    else
+                        o.MM = fGMBeamStandalone     (o.s_G  ,o.s_span,o.m,o.jxxG,o.PhiUG,o.PhiV,o.IW,o.IW_xm,o.bOrthogonal,o.bAxialCorr,o.V_tot);
+                    end
                 end
         end
     end

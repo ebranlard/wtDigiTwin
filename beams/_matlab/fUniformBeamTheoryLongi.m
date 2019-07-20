@@ -20,6 +20,14 @@ if nargin==0
     for i=1:nModesPlot 
         plot(x,U(i,:))
     end
+    for i=1:nModesPlot 
+        fprintf('Mode %d f=%.8f \n',i,freq(i))
+    end
+    for i=1:nModesPlot 
+        fprintf('Mode %d umid=%.8f \n',i,U(i,51))
+    end
+
+
     legds=arrayfun(@(i,f)sprintf('Mode %d f=%4.1f',i,f),1:nModesPlot,freq(1:nModesPlot),'UniformOutput',false);
     legend(legds);
     return
@@ -36,7 +44,7 @@ parse(p,varargin{:});
 p=p.Results;
 %
 if isempty(p.x)
-    x= linspace(0,L,100);
+    x= linspace(0,L,101);
 else
     x=p.x;
     if max(x)~=L; error('Max of x should be equal to L'); end;

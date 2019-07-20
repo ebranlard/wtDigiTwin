@@ -5,21 +5,6 @@ This code generates a complete mass matrix using turbine bending and mass data
 Reference:
      [1]: Flexible multibody dynamics using joint coordinates and the Rayleigh-Ritz approximation: the general framework behind and beyond Flex
 '''
-
-''' 
-Bending mode function which requires inputs of array x, coefficients of bending, and exponents associated with each coeff
-'''
-
-def polymode_dylan(x,coeff,exp):
-    # --- Alternative way of doing it
-    mode   = np.zeros(x.shape)
-    ddmode = np.zeros(x.shape)
-    for i in range(0,len(coeff)):
-        mode += coeff[i]*x**exp[i]
-        ddmode += coeff[i]*x**exp[i-2]*[i-1]*i
-    return mode/mode[-1], ddmode/mode[-1]
-
-
 def polymode(x,coeff,exp):
     """ 
     Computes a shape function described as a polynomial expression y = a_i x^e_i

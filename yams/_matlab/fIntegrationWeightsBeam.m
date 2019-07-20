@@ -48,7 +48,7 @@ end;
 %    IW_U is such that  \int f(x).Ue1(x) dx = \Sum GFW[1,i] f[i]
 IW_U=cell(1,nf);
 for j=1:nf
-    W=zeros(3,nSpan);
+    W=zeros(3,nSpan); % "GFWx" "GFWy" "GFWz" 
     for k=1:3
         U=PhiU{j}(k,:);
         V=PhiV{j}(k,:);

@@ -1,14 +1,10 @@
 import numpy as np
 import unittest
-    
-
 import scipy.optimize as sciopt
-# res=sciopt.minimize_scalar(lambda k:np.abs(k*(1+k/(4*lambda_r**2))-Ct), bounds=[0,1.8], method='bounded')
-# res=sciopt.minimize_scalar(lambda k:np.abs(k*(1+k/(4*lambda_r**2))-Ct), bounds=[0,1.8], method='bounded')
 
 def UniformBeamBendingModes(Type,EI,rho,A,L,w=None,x=None,Mtop=0,norm='tip_norm',nModes=4):
     """
-    returns Mode shapes and frequencies for a uniform beam
+    returns Mode shapes and frequencies for a uniform beam in bending
 
     References:
       Inman : Engineering variation
@@ -27,8 +23,8 @@ def UniformBeamBendingModes(Type,EI,rho,A,L,w=None,x=None,Mtop=0,norm='tip_norm'
         # See Inman, p.335 or Nielsen1 p129
         if 'unloaded-clamped-free' == (Type.lower()):
             # NOTE: cosh(beta_n)cos(beta_n) =-1
-            #    sigma_n = [ np.sinh(beta_n) - sin(beta_n) ]/[cosh(beta_n) + cos(beta_n)]
-            #    for j>5, a good approx is B(j) = (2*j-1)np.pi/2  and S(j)=1;
+            #  sigma_n = [ np.sinh(beta_n) - sin(beta_n) ]/[cosh(beta_n) + cos(beta_n)]
+            #  for j>5, a good approx is B(j) = (2*j-1)np.pi/2  and S(j)=1;
             #B  = [1.87510407, 4.69409113, 7.85475744,10.99554073,14.13716839, (2*6-1)*np.pi/2];
             #S  = [0.734095514 1.018467319 0.999224497 1.000033553 0.999998550 1];
             B = np.zeros(nModes)
@@ -46,7 +42,7 @@ def UniformBeamBendingModes(Type,EI,rho,A,L,w=None,x=None,Mtop=0,norm='tip_norm'
         else:
             raise Exception('unknown type %s',Type)
         #S  = ( sinh(B)-sin(B) ) ./ ( cosh(B) + cos(B));  # Sigma
-#C  = ( cosh(B)+cos(B) ) ./ ( sinh(B) + sin(B));  # Sigma
+        #C  = ( cosh(B)+cos(B) ) ./ ( sinh(B) + sin(B));  # Sigma
         SS = np.sinh(B) + np.sin(B)
         CC = np.cosh(B) + np.cos(B)
         # Frequency
@@ -77,9 +73,6 @@ def UniformBeamBendingModes(Type,EI,rho,A,L,w=None,x=None,Mtop=0,norm='tip_norm'
             raise Exception('unknown type %s',Type)
     else:
         raise Exception('Unknown %s'^Type)
-    ## Computation of derivatives if no analytical functions
-    # # V=fgradient_regular(U(i,:),4,dx);
-    # # K=fgradient_regular(V(i,:),4,dx);
     ## Going back to physical dimension
     x = x0 * L
     ModesV = ModesV/L
@@ -172,12 +165,9 @@ def UniformBeamTorsionModes(Type,G,Kt,Ip,rho,A,L,x=None,nModes=4,norm='tip_norm'
     #    ModesK = np.zeros((ModesV.shape,ModesV.shape))
     #    for i in np.arange(1,ModesV.shape[1-1]+1).reshape(-1):
     #        ModesK[i,:-1] = fgradient_regular(ModesV(i,:),4,dx)
-    #else:
     ModesK = []
     
     return freq,x,ModesV,ModesK
-
-
 
 
 # --------------------------------------------------------------------------------}
@@ -218,7 +208,6 @@ class Test(unittest.TestCase):
 
         np.testing.assert_almost_equal(freq,freq_ref)
         np.testing.assert_almost_equal(U[:,50],Umid_ref)
-
         #import matplotlib.pyplot as plt
         #plt.figure()
         #for i in np.arange(4):
@@ -240,17 +229,15 @@ class Test(unittest.TestCase):
         Ip  = np.pi / 32 * (D ** 4 - (D - 2 * t) ** 4)
         Kt  = np.pi / 64 * (D ** 4 - (D - 2 * t) ** 4)
         freq,x,V,_ = UniformBeamTorsionModes('unloaded-clamped-free',G,Kt,Ip,rho,A,L)
-
-        import matplotlib.pyplot as plt
-        plt.figure()
-        for i in np.arange(4):
-            plt.plot(x,V[i,:])
-        print(freq)
-        plt.show()
+        #import matplotlib.pyplot as plt
+        #plt.figure()
+        #for i in np.arange(4):
+        #    plt.plot(x,V[i,:])
+        #print(freq)
+        #plt.show()
         np.testing.assert_almost_equal(freq,freq_ref)
         np.testing.assert_almost_equal(V[:,50],Vmid_ref)
 
 
 if __name__=='__main__':
-
     unittest.main()

@@ -1,10 +1,4 @@
 import numpy as np
-from scipy.integrate import odeint, solve_ivp
-import matplotlib.pyplot as plt
-import weio
-import pandas as pd
-from scipy.interpolate import griddata
-import scipy.integrate as integrate
 '''
 This code generates a complete mass matrix using turbine bending and mass data
 

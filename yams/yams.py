@@ -1,11 +1,10 @@
 """
 Reference:
-     [1]: Flexible multibody dynamics using joint coordinates and the Rayleigh-Ritz approximation: the general framework behind and beyond Flex
+     [1]: Branlard, Flexible multibody dynamics using joint coordinates and the Rayleigh-Ritz approximation: the general framework behind and beyond Flex, Wind Energy, 2019
 """
 
 import numpy as np
 import unittest
-
 
 # --------------------------------------------------------------------------------}
 # --- Bodies 

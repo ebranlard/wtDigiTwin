@@ -103,6 +103,7 @@ class BeamBody(Body):
 
         B.computeMassMatrix()
         B.KK = GKBeam(B.s_span, B.EI, B.PhiK, bOrth=B.bOrth)
+        B.DD = np.zeros((6+B.nf,6+B.nf))
 
         # TODO
         B.V0         = np.zeros((3,B.nSpan))
@@ -223,30 +224,36 @@ class FASTBeamBody(BeamBody):
                               [ inp['BldFl1Sh(5)'], inp['BldFl2Sh(5)'], inp['BldEdgSh(5)']],
                               [ inp['BldFl1Sh(6)'], inp['BldFl2Sh(6)'], inp['BldEdgSh(6)']]])
 
+            damp_zeta  = np.array([ inp['BldFlDmp(1)'], inp['BldFlDmp(2)'], inp['BldEdDmp(1)']])/100
+            mass_fact = inp['AdjBlMs']                                              # Factor to adjust blade mass density (-)
+          
+            prop     = inp['BldProp']
+            span_max = ED['TipRad']   # TODO TODO do somthing about hub rad
+            s_bar, m, EIFlp, EIEdg  =prop[:,0], prop[:,3], prop[:,4], prop[:,5]
+
         elif body_type.lower()=='tower':
             coeff = np.array([[ inp['TwFAM1Sh(2)'], inp['TwFAM2Sh(2)'], inp['TwSSM1Sh(2)'], inp['TwSSM2Sh(2)']],
                               [ inp['TwFAM1Sh(3)'], inp['TwFAM2Sh(3)'], inp['TwSSM1Sh(3)'], inp['TwSSM2Sh(3)']],
                               [ inp['TwFAM1Sh(4)'], inp['TwFAM2Sh(4)'], inp['TwSSM1Sh(4)'], inp['TwSSM2Sh(4)']],
                               [ inp['TwFAM1Sh(5)'], inp['TwFAM2Sh(5)'], inp['TwSSM1Sh(5)'], inp['TwSSM2Sh(5)']],
                               [ inp['TwFAM1Sh(6)'], inp['TwFAM2Sh(6)'], inp['TwSSM1Sh(6)'], inp['TwSSM2Sh(6)']]])
+            damp_zeta = np.array([inp['TwrFADmp(1)'], inp['TwrFADmp(2)'], inp['TwrSSDmp(1)'], inp['TwrSSDmp(2)']])/100 # structural damping ratio 
+            mass_fact = inp['AdjTwMa']                                              # Factor to adjust tower mass density (-)
+
+            prop     = inp['TowProp']
+            span_max = ED['TowerHt']-ED['TowerBsHt']
+            s_bar, m, EIFlp, EIEdg  = prop[:,0], prop[:,1], prop[:,2], prop[:,3]
+
+
         else:
             raise Exception('Body type not supported {}'.format(body_type))
         nShpMax=coeff.shape[1]
         if nShapes>nShpMax:
             raise Exception('A maximum of {} shapes function possible with FAST {} body'.format(nShpMax,body_type))
 
-        # --- Structural properties
-        if body_type.lower()=='blade':
-            prop     = inp['BldProp']
-            span_max = ED['TipRad']   # TODO TODO do somthing about hub rad
-            s_bar, m, EIFlp, EIEdg  =prop[:,0], prop[:,3], prop[:,4], prop[:,5]
-
-        elif body_type.lower()=='tower':
-            prop     = inp['TowProp']
-            span_max = ED['TowerHt']-ED['TowerBsHt']
-            s_bar, m, EIFlp, EIEdg  = prop[:,0], prop[:,1], prop[:,2], prop[:,3]
 
         # --- Interpolating structural properties
+        m *= mass_fact
         if nSpan is None or nSpan<0:
             nSpan  = len(prop[:,0])
         s_span     = np.linspace(0,span_max,nSpan)
@@ -289,8 +296,22 @@ class FASTBeamBody(BeamBody):
 
         super(FASTBeamBody,B).__init__(s_span, s_P0, m, PhiU, PhiV, PhiK, EI, jxxG=jxxG, bAxialCorr=bAxialCorr, bOrth=body_type=='blade')
 
+        # Damping
+        B.DD=np.zeros((6+nShapes,6+nShapes))
+
+        # Using diagonal damping
+        for j in range(nShapes):
+            m             = B.MM[6+j,6+j]
+            k             = B.KK[6+j,6+j]
+            om            = np.sqrt(k/m)
+            xi            = damp_zeta[j]*2*np.pi
+            c             = xi * m * om / np.pi
+            B.DD[6+j,6+j] = c
+
+
         # --- Storing data in object
         B.main_axis = main_axis # TODO
+
 
 
 

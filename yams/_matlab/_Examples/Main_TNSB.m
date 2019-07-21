@@ -15,7 +15,7 @@ bBld=1;
 bInit=1;     %1  <<No Init to give mass matrix
 nB=2;            %2 
 
-bUseShapeIntegrals=true;
+bUseShapeIntegrals=false;
 
 nDOF=1+nShapes_twr+nShapes_bld*nB;
 if bInit

@@ -15,6 +15,8 @@ bBld=1;
 bInit=1;     %1  <<No Init to give mass matrix
 nB=2;            %2 
 
+bUseShapeIntegrals=true;
+
 nDOF=1+nShapes_twr+nShapes_bld*nB;
 if bInit
     q=zeros(nDOF,1);
@@ -32,11 +34,11 @@ z_NS    = - 10;
 z_NGnac = 2e+00;         ;
 z_SGhub = z_SR+z_RGhub         ;
 
-r_NGnac_inN = [0;0;z_NGnac];
-r_NS_inN    = [0;0;z_NS];
-r_SGhub_inS = [0;0;z_SGhub]; 
-r_SR_inS    = [0;0;z_SR];
-r_RGhub_inS = -r_SR_inS+r_SGhub_inS;
+r_NGnac_inN = [0;0;z_NGnac]
+r_NS_inN    = [0;0;z_NS]
+r_SGhub_inS = [0;0;z_SGhub] 
+r_SR_inS    = [0;0;z_SR]
+r_RGhub_inS = -r_SR_inS+r_SGhub_inS
 
 M_hub=1e5*bHubMass;
 IR_hub=zeros(3,3); % [kg*m^2].
@@ -69,9 +71,9 @@ iPsi=nShapes_twr+1;
 % --------------------------------------------------------------------------------{
 %% Blade Body
 bCompat =false;
-Bld1=fCreateBodyUniformBeam('Bld1',nShapes_bld,nSpan_bld,L_bld,EI_bld,m_bld,0,'jxx',jxx_bld,'GKt',GKt_bld,'bCompatibility',bCompat);
-Bld2=fCreateBodyUniformBeam('Bld2',nShapes_bld,nSpan_bld,L_bld,EI_bld,m_bld,0,'jxx',jxx_bld,'GKt',GKt_bld,'bCompatibility',bCompat);
-Bld3=fCreateBodyUniformBeam('Bld3',nShapes_bld,nSpan_bld,L_bld,EI_bld,m_bld,0,'jxx',jxx_bld,'GKt',GKt_bld,'bCompatibility',bCompat);
+Bld1=fCreateBodyUniformBeam('Bld1',nShapes_bld,nSpan_bld,L_bld,EI_bld,m_bld,0,'jxx',jxx_bld,'GKt',GKt_bld,'bCompatibility',bCompat,'bUseShapeIntegrals',bUseShapeIntegrals);
+Bld2=fCreateBodyUniformBeam('Bld2',nShapes_bld,nSpan_bld,L_bld,EI_bld,m_bld,0,'jxx',jxx_bld,'GKt',GKt_bld,'bCompatibility',bCompat,'bUseShapeIntegrals',bUseShapeIntegrals);
+Bld3=fCreateBodyUniformBeam('Bld3',nShapes_bld,nSpan_bld,L_bld,EI_bld,m_bld,0,'jxx',jxx_bld,'GKt',GKt_bld,'bCompatibility',bCompat,'bUseShapeIntegrals',bUseShapeIntegrals);
 
 %% ShaftHub Body 
 Sft=fCreateBodyRigid('ShaftHub',M_hub,IG_hub,r_SGhub_inS);
@@ -85,8 +87,7 @@ if nB==2
 else
     Mtop=(Bld1.Mass+Bld2.Mass+Bld3.Mass)*bBld + Sft.Mass + Nac.Mass;
 end
-Twr=fCreateBodyUniformBeam('Tower',nShapes_twr,nSpan_twr,L_twr,EI_twr,m_twr,Mtop,'bCompatibility',false,'bAxialCorr',false);
-
+Twr=fCreateBodyUniformBeam('Tower',nShapes_twr,nSpan_twr,L_twr,EI_twr,m_twr,Mtop,'bCompatibility',false,'bAxialCorr',false,'bUseShapeIntegrals',bUseShapeIntegrals)
 %% Ground
 Grd=fCreateBodyGround('Ground');
 
@@ -293,3 +294,4 @@ disp('M ("manually" built)')
 disp(MM)
 disp('K ("manually" build)')
 disp(KK)
+Twr.MM

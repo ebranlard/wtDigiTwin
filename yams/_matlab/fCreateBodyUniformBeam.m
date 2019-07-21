@@ -7,6 +7,7 @@ p = fInputParser();
 p.addParameter('bCompatibility',false);
 p.addParameter('bAxialCorr',true);
 p.addParameter('bStiffnessFromGM',false);
+p.addParameter('bUseShapeIntegrals',true);
 p.addParameter('jxx',[],@isnumeric);
 p.addParameter('GKt',[],@isnumeric);
 p.parse(varargin{:});
@@ -77,5 +78,7 @@ end
 B.bAxialCorr         = p.bAxialCorr        ;
 B.bStiffnessFromGM   = p.bStiffnessFromGM  ;
 B.setCompatible(p.bCompatibility);
+B.bUseShapeIntegrals   = p.bUseShapeIntegrals  ;
+p.bUseShapeIntegrals
 B.Mtop=Mtop;
 B.init();

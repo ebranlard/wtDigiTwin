@@ -101,7 +101,7 @@ Mtt(1,1)= s22+s33; Mtt(1,2)= -s12   ; Mtt(1,3)= -s13   ;
 Mtt(2,1)= -s12   ; Mtt(2,2)= s11+s33; Mtt(2,3)= -s23   ;
 Mtt(3,1)= -s13   ; Mtt(3,2)= -s23   ; Mtt(3,3)= s11+s22;
 % Torsion contribution
-Mtt(1,1)=Mtt(1,1)+Jxx; 
+Mtt(1,1)=Mtt(1,1)+Jxx;
 
 % --- Mxg = \int Phi dm  =   Psi
 Mxg=NaN(3,nf);

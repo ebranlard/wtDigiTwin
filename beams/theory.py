@@ -238,6 +238,5 @@ class Test(unittest.TestCase):
         np.testing.assert_almost_equal(freq,freq_ref)
         np.testing.assert_almost_equal(V[:,50],Vmid_ref)
 
-
 if __name__=='__main__':
     unittest.main()

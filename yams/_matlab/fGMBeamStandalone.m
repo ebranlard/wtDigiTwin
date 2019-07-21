@@ -70,8 +70,8 @@ S(3)=trapzs(s_span, s_G(3,:) .* m);
 Mxt=[0    S(3)  -S(2) ;
     -S(3)  0     S(1) ; 
     +S(2) -S(1)   0  ];
-
 if bAxialCorr
+    % TODO TODO TODO m15 and m16 may need to be additive!
     % --- Variables for axial correction
     % FT=fcumtrapzlr(s_span,m);
     FT = - fliplr( cumtrapz( fliplr(s_span), fliplr(m)) ) ;

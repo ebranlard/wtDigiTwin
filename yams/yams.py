@@ -208,9 +208,9 @@ def fSkew(x):
 
 
 # --------------------------------------------------------------------------------}
-# --- TEST  
+# --- TESTS
 # --------------------------------------------------------------------------------{
-class TesT(unittest.TestCase):
+class Test(unittest.TestCase):
     def test_rot(self):
         # --- Identity matrix for 0 rotation
         np.testing.assert_almost_equal(fRotx(0),np.eye(3))

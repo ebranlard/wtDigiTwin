@@ -1,6 +1,9 @@
 import numpy as np
+import unittest
+import scipy.integrate as sciint
 '''
-This code generates a complete mass matrix using turbine bending and mass data
+Flexible beam tools:
+    - computation of generalized mass and stiffness matrix
 
 Reference:
      [1]: Flexible multibody dynamics using joint coordinates and the Rayleigh-Ritz approximation: the general framework behind and beyond Flex
@@ -34,6 +37,34 @@ def polymode(x,coeff,exp):
     scale= mode[-1]
     return mode/scale, dmode/(scale*x_max), ddmode/(scale*x_max*x_max)
 
+
+def integrationWeights(s_span,m):
+    """ Returns integration weights convenient to integrate functions along the span of the beam
+    The equations are written such that s_span(1) is not necessary 0
+    
+    - Span Integration weights  IW and IW_x 
+      Assuming a fonction f that varies linearly
+         IW   is such that \int   f(x) dx = \Sum IW  [i] F[i]
+         IW_x is such that \int x.f(x) dx = \Sum IW_x[i] F[i]
+
+    - Mass integration weights iW_m iW_xm 
+         iW_m  is such that \int   f(x).m(x) dx = \Sum iW_m [i] F[i]
+         iW_xm is such that \int x.f(x).m(x) dx = \Sum iW_xm[i] F[i]
+    """
+    IW  =np.zeros(s_span.shape); 
+    IW_x=np.zeros(s_span.shape); 
+    for i in np.arange(len(s_span)-1):
+        L         = s_span[i+1] - s_span[i]
+        IW  [i]   = IW[i] + L/2
+        IW  [i+1] = L/2
+        IW_x[i]   = IW_x[i] + (s_span[i]/2 + L/6)*L
+        IW_x[i+1] = (s_span[i]/2 + L/3)*L
+    IW_m  = IW*m   
+    IW_xm = IW_x*m 
+    return IW,IW_x,IW_m,IW_xm
+
+
+
 def GKBeam(s_span, EI, ddU, bOrth=False):    #Compute Kgg
     """ 
        Computes generalized stiffness matrix for a beam
@@ -43,20 +74,19 @@ def GKBeam(s_span, EI, ddU, bOrth=False):    #Compute Kgg
     OPTIONAL INPUTS:
      - bOrth : if true, enforce orthogonality of modes
     """
-    nU = len(ddU)
-    KK0 = np.zeros((6+nU,6+nU))
-    Kgg = np.zeros((nU,nU))
-    Kgg[:,:] = np.nan
-    for i in range(0,nU):
-        for j in range(0,nU):
+    nf = len(ddU)
+    KK0 = np.zeros((6+nf,6+nf))
+    Kgg = np.zeros((nf,nf))
+    for i in range(0,nf):
+        for j in range(0,nf):
             Kgg[i,j] = np.trapz(EI[0,:]*ddU[i][0,:]*ddU[j][0,:] + EI[1,:]*ddU[i][1,:]*ddU[j][1,:] + EI[2,:]*ddU[i][2,:]*ddU[j][2,:],s_span)
     if bOrth:
-        Kgg=Kgg*np.eye(nU)
+        Kgg=Kgg*np.eye(nf)
     #print('Kgg\n',Kgg)
     KK0[6:,6:] = Kgg
     return KK0
     
-def GMBeam(s_G, s_span, m, U=None, bOrth=False):
+def GMBeam(s_G, s_span, m, U=None, V=None, jxxG=None, bOrth=False, bAxialCorr=False, IW=None, IW_xm=None, main_axis='', bUseIW=True, V_tot=None, Peq_tot=None):
     """
     Computes generalized mass matrix for a beam.
     Eq.(2) from [1]
@@ -77,66 +107,130 @@ def GMBeam(s_G, s_span, m, U=None, bOrth=False):
      - U , if omitted, then rigid body (6x6) mass matrix is returned
     
     """
+    # Speed up integration along the span, using integration weight
+    def trapzs(yy,**args):
+        return np.sum(yy*IW)
+    if IW is None or IW_xm is None:
+        IW,_,_,IW_xm=integrationWeights(s_span,m)
 
     if U is not None:
-        nU = len(U)
+        nf = len(U)
     else:
-        nU=0
+        nf=0
+
+    # --- Torsion-related variables - Zeros by default
+    if jxxG is not None:
+        Jxx = trapzs(jxxG) # Imomx
+    else:
+        Jxx = 0
+    GMJxx=np.zeros(nf);
+    I_Jxx=np.zeros(nf);
+    if V is not None:
+        if main_axis=='x':
+            for j in range(nf):
+                VJ       = jxxG*V[j][0,:]
+                GMJxx[j] = trapzs(V[j][0,:]*VJ)
+                I_Jxx[j] = trapzs(VJ)
+        else:
+            raise NotImplementedError()
+
     # --- Mxx
-    M = np.trapz(m,s_span)
+    M = trapzs(m)
     Mxx = np.identity(3)*M
     #print('Mxx\n',Mxx)
 
-    # --- Mxt
-    C_x = np.trapz(s_G[0,:]*m,s_span)
-    C_y = np.trapz(s_G[1,:]*m,s_span)
-    C_z = np.trapz(s_G[2,:]*m,s_span)
+    # --- Mxt = -\int [~s] dm    =  -Skew(sigma+Psi g)
+    C_x = trapzs(s_G[0,:]*m)
+    C_y = trapzs(s_G[1,:]*m)
+    C_z = trapzs(s_G[2,:]*m)
     Mxt = np.array([[0, C_z, -C_y],[-C_z, 0, C_x],[C_y, -C_x, 0]])
+    if bAxialCorr:
+        # TODO TODO TODO m15 and m16 may need to be additive!
+        # --- Variables for axial correction
+        # FT=fcumtrapzlr(s_span,m);
+        FT = - sciint.cumtrapz( m[-1::-1], s_span[-1::-1],)[-1::-1] 
+        FT = np.concatenate((FT,[0]))
+        if V_tot is None: 
+            raise Exception('Please provide Vtot for axial correction'); end
+        if main_axis=='x':
+            Mxt[0,1]=+trapzs(V_tot[2,:]*FT) # m15
+            Mxt[0,2]=-trapzs(V_tot[1,:]*FT) # m16
+        else:
+            raise NotImplementedError()
     #print('Mxt\n',Mxt)
 
-    # --- Mxg
-    Mxg      = np.zeros((3,nU))
-    Mxg[:,:] = np.nan
-    for j in range(nU):
-        Mxg[0,j] = np.trapz(U[j][0,:]*m,s_span)
-        Mxg[1,j] = np.trapz(U[j][1,:]*m,s_span)
-        Mxg[2,j] = np.trapz(U[j][2,:]*m,s_span)
+    # --- Mxg = \int Phi dm  =   Psi
+    Mxg      = np.zeros((3,nf))
+    for j in range(nf):
+        Mxg[0,j] = trapzs(U[j][0,:]*m)
+        Mxg[1,j] = trapzs(U[j][1,:]*m)
+        Mxg[2,j] = trapzs(U[j][2,:]*m)
+    if bAxialCorr:
+        # TODO TODO TODO correction may need to be additive
+        if (V_tot is not None) and (Peq_tot is not None):
+            raise Exception('Provide either V_tot or Peq_tot')
+        if V_tot is not None:
+            if main_axis=='x':
+                for j in range(nf):
+                    Mxg[0,j]= trapzs(-V[j][1,:]*V_tot[1,:]*FT - V[j][2,:]*V_tot[2,:]*FT); 
+            else:
+                raise NotImplementedError()
+        elif Peq_tot is not None:
+            if main_axis=='x':
+                for j in range(nf):
+                    Mxg[0,j] = trapzs(U[j][1,:]*Peq_tot[1,:] + U[j][2,:]*Peq_tot[2,:] );
+            else:
+                raise NotImplementedError()
+        else:
+            raise Exception('Please provide Vtot of Peq_tot for axial correction');
     #print('Mxg\n',Mxg)
         
-    # --- Mtt
-    s00 = np.trapz(s_G[0,:]*s_G[0,:]*m,s_span)
-    s01 = np.trapz(s_G[0,:]*s_G[1,:]*m,s_span)
-    s02 = np.trapz(s_G[0,:]*s_G[2,:]*m,s_span)
-    s11 = np.trapz(s_G[1,:]*s_G[1,:]*m,s_span)
-    s12 = np.trapz(s_G[1,:]*s_G[2,:]*m,s_span)
-    s22 = np.trapz(s_G[2,:]*s_G[2,:]*m,s_span)
-
+    # --- Mtt = - \int [~s][~s] dm
+    if main_axis=='x' and bUseIW:
+        s00= np.sum(IW_xm * s_G[0,:]);
+        s01= np.sum(IW_xm * s_G[1,:]);
+        s02= np.sum(IW_xm * s_G[2,:]);
+    else:
+        s00 = trapzs(s_G[0,:]*s_G[0,:]*m)
+        s01 = trapzs(s_G[0,:]*s_G[1,:]*m)
+        s02 = trapzs(s_G[0,:]*s_G[2,:]*m)
+    s11 = trapzs(s_G[1,:]*s_G[1,:]*m)
+    s12 = trapzs(s_G[1,:]*s_G[2,:]*m)
+    s22 = trapzs(s_G[2,:]*s_G[2,:]*m)
     Mtt = np.zeros((3,3))
-    Mtt[0,0] = s11 + s22;   Mtt[0,1] = -s01;       Mtt[0,2] = -s02
-    Mtt[1,0] = -s01;        Mtt[1,1] = s00 + s22;  Mtt[1,2] = -s12
-    Mtt[2,0] = -s02;        Mtt[2,1] = -s12;       Mtt[2,2] = s00+s11
+    Mtt[0,0] = s11 + s22 + Jxx;   Mtt[0,1] = -s01;       Mtt[0,2] = -s02
+    Mtt[1,0] = -s01;              Mtt[1,1] = s00 + s22;  Mtt[1,2] = -s12
+    Mtt[2,0] = -s02;              Mtt[2,1] = -s12;       Mtt[2,2] = s00+s11
     #print('Mtt\n',Mtt)
 
-    # --- Mtg
-    Mtg      = np.zeros((3,nU))
-    Mtg[:,:] = np.nan
-    for j in range(nU):
-        Mtg[0,j] = np.trapz((-s_G[2,:]*U[j][1,:] + s_G[1,:]*U[j][2,:])*m,s_span)
-        Mtg[1,j] = np.trapz(( s_G[2,:]*U[j][0,:] - s_G[0,:]*U[j][2,:])*m,s_span)
-        Mtg[2,j] = np.trapz((-s_G[1,:]*U[j][0,:] + s_G[0,:]*U[j][1,:])*m,s_span)
+    # --- Mtg  = \int [~s] Phi dm  
+    Mtg      = np.zeros((3,nf))
+    if main_axis=='x' and bUseIW:
+        for j in range(nf):
+            Mtg[0,j] = trapzs((-s_G[2,:]*U[j][1,:] + s_G[1,:]*U[j][2,:])*m) + I_Jxx[j]
+            Mtg[1,j] = trapzs(  (+s_G[2,:]*U[j][0,:]*m)) - sum(IW_xm*U[j][2,:]);
+            Mtg[2,j] = trapzs(  (-s_G[1,:]*U[j][0,:]*m)) + sum(IW_xm*U[j][1,:]);
+    else:
+        for j in range(nf):
+            Mtg[0,j] = trapzs((-s_G[2,:]*U[j][1,:] + s_G[1,:]*U[j][2,:])*m) + I_Jxx[j]
+            Mtg[1,j] = trapzs(( s_G[2,:]*U[j][0,:] - s_G[0,:]*U[j][2,:])*m)
+            Mtg[2,j] = trapzs((-s_G[1,:]*U[j][0,:] + s_G[0,:]*U[j][1,:])*m)
     #print('Mtg\n',Mtg)
         
-    # --- Mgg
-    Mgg = np.zeros((nU,nU))
-    for i in range(nU):
-        for j in range(nU):
-            Mgg[i,j] = np.trapz((U[i][0,:]*U[j][0,:] + U[i][1,:]*U[j][1,:] + U[i][2,:]*U[j][2,:])*m,s_span)
+    # --- Mgg  = \int Phi^t Phi dm  =  Sum Upsilon_kl(i,i)
+    Mgg = np.zeros((nf,nf))
+    for i in range(nf):
+        for j in range(nf):
+            Mgg[i,j] = trapzs((U[i][0,:]*U[j][0,:] + U[i][1,:]*U[j][1,:] + U[i][2,:]*U[j][2,:])*m)
+
+    # Adding torsion contribution if any
+    Mgg=Mgg+np.diag(GMJxx)
     if bOrth:
-        Mgg=Mgg*np.eye(nU)
+        Mgg=Mgg*np.eye(nf)
     #print('Mgg\n',Mgg)
 
     # --- Build complete mass matrix
-    MM = np.zeros((6+nU,6+nU))
+    MM = np.zeros((6+nf,6+nf))
     MM[:3,:3]   = Mxx; MM[:3,3:6] = Mxt; MM[:3,6:] = Mxg
     MM[3:6,3:6] = Mtt; MM[3:6,6:] = Mtg
     MM[6:,6:]   = Mgg
@@ -144,3 +238,95 @@ def GMBeam(s_G, s_span, m, U=None, bOrth=False):
     i_lower     = np.tril_indices(len(MM), -1)
     MM[i_lower] = MM.T[i_lower]
     return MM
+
+
+
+# --------------------------------------------------------------------------------}
+# --- TESTS
+# --------------------------------------------------------------------------------{
+class Test(unittest.TestCase):
+    def test_rot(self):
+        try:
+            import beams.theory as bt
+        except:
+            print('[FAIL] Loading beam theory')
+            pass
+
+        np.set_printoptions(linewidth=500)
+        from .yams import fRotx
+            
+        # --- Reference data
+        MM_ref=np.array([[ 30000.,      0.,      0.00000,      0.,         0.00000,         0.,      0.00000,      0.00000,      0.00000],
+                         [     0.,  30000.,      0.00000,      0.,         0.00000,    900000.,      0.00000,      0.00000,      0.00000],
+                         [     0.,      0.,  30000.00000,      0.,   -900000.00000,         0.,  11748.96793,  -6494.82063,   3839.68233],
+                         [     0.,      0.,      0.00000,6000000.,         0.00000,         0.,      0.00000,      0.00000,      0.00000],
+                         [     0.,      0.,-900000.00000,      0.,  36000000.00000,         0.,-512010.35981,  81016.00516, -30396.91796],
+                         [     0., 900000.,      0.00000,      0.,         0.00000,  36000000.,      0.00000,      0.00000,      0.00000],
+                         [     0.,      0.,  11748.96793,      0.,   -512010.35981,         0.,   7508.18374,     18.30346,     27.42335],
+                         [     0.,      0.,  -6494.82063,      0.,     81016.00516,         0.,     18.30346,   7528.42330,     37.54289],
+                         [     0.,      0.,   3839.68233,      0.,    -30396.91796,         0.,     27.42335,     37.54289,   7546.66429]])
+        
+        KKg_ref=np.array([[ 286478.07306 , -4376.65199 , 18360.80780],[-4376.65199,  11281454.27909 ,  -157525.64695],[18360.80780,-157525.64695  ,88662737.01300]])
+
+        MM2_ref=np.array([[30000.00000,     0.,      0.00000,       0.00000,    11730.33344,       0.00000,   -196.26573,  -52.46587,   134.55304],
+                          [    0.00000, 30000.,      0.00000,  -90000.00000,        0.00000,  900000.00000,      0.00000,    0.00000,     0.00000],
+                          [    0.00000,     0.,  30000.00000,   45000.00000,  -900000.00000,       0.00000,  11748.96793,-6494.82063,  3839.68233],
+                          [    0.00000,-90000.,  45000.00000, 6450267.53864, -1800000.00000,-3600000.00000,  25618.35390,-4032.96435,  1537.68181],
+                          [ 11730.33344,     0.,-900000.00000,-1800000.00000, 36360214.03092, -180107.01546,-512010.35981,81016.00516,-30396.91796],
+                          [    0.00000,900000.,      0.00000,-3600000.00000,  -180107.01546,36090053.50773,      0.00000,    0.00000,     0.00000],
+                          [ -196.26573,     0.,  11748.96793,   25618.35390,  -512010.35981,       0.00000,   7508.18374,   18.30346,    27.42335],
+                          [  -52.46587,     0.,  -6494.82063,   -4032.96435,    81016.00516,       0.00000,     18.30346, 7528.42330,    37.54289],
+                          [  134.55304,     0.,   3839.68233,    1537.68181,   -30396.91796,       0.00000,     27.42335,   37.54289,  7546.66429]])
+
+
+        # --- Setting up mode shapes
+        nShapes=3;
+        nSpan=30;
+        L   = 60  ; EI0 = 2E+10; m = 5E+2;
+        GKt = 7e11# [Nm2]
+        jxx = 1e5 # [kg.m]
+        A=1; rho=A*m;
+
+        x=np.linspace(0,L,nSpan);
+        # Mode shapes
+        freq,s_span,U,V,K = bt.UniformBeamBendingModes('unloaded-clamped-free',EI0,rho,A,L,x=x)
+        PhiU = np.zeros((nShapes,3,nSpan)) # Shape
+        PhiV = np.zeros((nShapes,3,nSpan)) # Slope
+        PhiK = np.zeros((nShapes,3,nSpan)) # Curvature
+        for j in np.arange(nShapes):  
+            PhiU[j][2,:] = U[j,:] # Setting modes along z
+            PhiV[j][2,:] = V[j,:]
+            PhiK[j][2,:] = K[j,:]
+        m    = m*np.ones(nSpan)
+        jxxG = jxx*np.ones(nSpan)
+        EI= np.zeros((3,nSpan))
+        EI[1,:] = EI0
+        EI[2,:] = EI0
+        # if ~isempty(p.GKt)
+        #       B.GKt=p.GKt*ones(size(B.s_span));
+        
+        # --- Testing for straight COG
+        s_G      = np.zeros((3,nSpan))
+        s_G[0,:] = x
+        MM = GMBeam(s_G, s_span, m, PhiU, jxxG=jxxG, bUseIW=True, main_axis='x') # Ref uses IW_xm
+        KK = GKBeam(s_span, EI, PhiK)
+
+        #np.testing.assert_equal(np.all(MDiff<1e-3),True)
+        np.testing.assert_allclose(MM,MM_ref,rtol=1e-5)
+        np.testing.assert_allclose(KK[6:,6:],KKg_ref,rtol=1e-5)
+
+        # --- Testing for curved COG
+        s_G      = np.zeros((3,nSpan))
+        s_G[0,:] = x
+        s_G[1,:] = x/20
+        s_G[2,:] = x/10
+        V_tot=PhiV[0]
+        MM = GMBeam(s_G, s_span, m, PhiU, jxxG=jxxG, bUseIW=True, main_axis='x', V=PhiV, bAxialCorr=True,V_tot=V_tot) # Ref uses IW_xm
+        ##np.testing.assert_equal(np.all(MDiff<1e-3),True)
+        np.testing.assert_allclose(MM,MM2_ref,rtol=1e-5)
+        #np.testing.assert_allclose(KK[6:,6:],KKg_ref,rtol=1e-5)
+
+
+
+if __name__=='__main__':
+    unittest.main()

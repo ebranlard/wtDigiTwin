@@ -5,29 +5,63 @@ Reference:
 
 import numpy as np
 import unittest
+try:
+    from .flexibility import GMBeam, GKBeam, polymode
+except:
+    from flexibility import GMBeam, GKBeam, polymode
 
 # --------------------------------------------------------------------------------}
 # --- Bodies 
 # --------------------------------------------------------------------------------{
-class body():
-    def __repr__(self):
-        pass
-    pass
+class Body(object):
+    def __init__(B):
+        B.MM     = None
+        B.Name   = ''
 
-def fCreateBodyRigid(Name,Mass,J_G,rho_G):
-    """
-    Creates a rigid body 
-    For now, based on a fake class
-    """
-    B = body()
-    B.s_G_inB = rho_G
-    B.J_G_inB = J_G
-    B.Mass    = Mass
-    B.J_O_inB = fTranslateInertiaMatrixFromCOG(B.J_G_inB, B.Mass, B.s_G_inB)
-    B.KK=np.zeros((6,6))
-    B.MM = fGMRigidBody(B.Mass,B.J_O_inB,B.s_G_inB)
-    B.nf=0
-    return B
+    def updateKinematics(o,x_0,R_0b,gz,v_0,a_v_0):
+        # Updating position of body origin in global coordinates
+        o.r_O = x_0[0:3]
+        o.gzf = gz
+        # Updating Transformation matrix
+        o.R_0b=R_0b
+        # Updating rigid body velocity and acceleration
+        o.v_O_inB     = np.dot(R_0b, v_0[0:3])
+        o.om_O_inB    = np.dot(R_0b, v_0[3:6])
+        o.a_O_v_inB   = np.dot(R_0b, a_v_0[0:3])
+        o.omp_O_v_inB = np.dot(R_0b, a_v_0[3:6])
+        
+    def __repr__(B):
+        pass
+    
+    @property
+    def Mass(B):
+        if B.MM is None:
+            return 0
+        return B.MM[0,0]
+
+    @property
+    def nf(B):
+        if hasattr(B,'PhiU'):
+            return len(B.PhiU)
+        else:
+            return 0
+
+# --------------------------------------------------------------------------------}
+# --- Rigid Body 
+# --------------------------------------------------------------------------------{
+class RigidBody(Body):
+    def __init__(B,Name,Mass,J_G,rho_G):
+        """
+        Creates a rigid body 
+        For now, based on a fake class
+        """
+        super(Body,B).__init__()
+        B.s_G_inB = rho_G
+        B.J_G_inB = J_G
+        B.J_O_inB = fTranslateInertiaMatrixFromCOG(B.J_G_inB, Mass, B.s_G_inB)
+        B.KK=np.zeros((6,6))
+        B.MM = fGMRigidBody(Mass,B.J_O_inB,B.s_G_inB)
+
 
 def fGMRigidBody(Mass,J,rho):
     """ Generalized mass matrix for a rigid body (i.e. mass matrix) Eq.(15) of [1] """
@@ -38,6 +72,227 @@ def fGMRigidBody(Mass,J,rho):
     MM[3:6,0:3] = S ; # transpose(S)=-S;
     MM[3:6,3:6] = J ;
     return MM
+
+
+# --------------------------------------------------------------------------------}
+# --- Beam Body 
+# --------------------------------------------------------------------------------{
+class BeamBody(Body):
+    def __init__(B, s_span, s_P0, m, PhiU, PhiV, PhiK, EI, jxxG=None, s_G0=None, bAxialCorr=False, bOrth=False):
+        """ 
+          Points P0 - Undeformed mean line of the body
+        """
+        super(BeamBody,B).__init__()
+        B.s_span = s_span
+        B.m      = m
+        B.s_G0   = s_G0
+        B.PhiU   = PhiU
+        B.PhiV   = PhiV
+        B.PhiK   = PhiK
+        B.jxxG   = jxxG
+        B.s_P0   = s_P0
+        B.EI     = EI
+        if jxxG is None:
+            B.jxxG   = 0*m
+        if B.s_G0 is None:
+            B.s_G0=B.s_P0
+    
+        B.s_G    = B.s_G0
+        B.bAxialCorr = bAxialCorr
+        B.bOrth      = bOrth
+
+        B.computeMassMatrix()
+        B.KK = GKBeam(B.s_span, B.EI, B.PhiK, bOrth=B.bOrth)
+
+        # TODO
+        B.V0         = np.zeros((3,B.nSpan))
+        B.K0         = np.zeros((3,B.nSpan))
+        B.rho_G0_inS = np.zeros((3,B.nSpan)) # location of COG in each cross section
+        #[o.PhiV,o.PhiK] = fBeamSlopeCurvature(o.s_span,o.PhiU,o.PhiV,o.PhiK,1e-2);
+        #[o.V0,o.K0]     = fBeamSlopeCurvature(o.s_span,o.s_P0,o.V0,o.K0,1e-2)    ;
+        #if isempty(o.s_G0); o.s_G0=o.s_P0; end;
+        #if isempty(o.rho_G0_inS); o.rho_G0_inS=np.zeros(3,o.nSpan); end;
+        #if isempty(o.rho_G0    ); 
+        #    o.rho_G0 =np.zeros(3,o.nSpan);
+        #    for i=1:o.nSpan
+        #        o.rho_G0(1:3,i) =fRotx(o.V0(1,i))*o.rho_G0_inS(:,i);
+
+    def computeMassMatrix(B):
+        B.MM = GMBeam(B.s_G, B.s_span, B.m, B.PhiU, jxxG=B.jxxG, bUseIW=True, main_axis='x', bAxialCorr=B.bAxialCorr, bOrth=B.bOrth)
+
+    def updateKinematics(o,x_0,R_0b,gz,v_0,a_v_0):
+        super(BeamBody,o).updateKinematics(x_0,R_0b,gz,v_0,a_v_0)
+        # --- Calculation of deformations wrt straight beam axis, curvature (K) and velocities (UP)
+        if o.nf>0:
+            o.gzpf  = v_0[6:]
+            o.gzppf = a_v_0[6:]
+            # Deflections shape
+            o.U  = np.zeros((3,o.nSpan));
+            o.V  = np.zeros((3,o.nSpan));
+            o.K  = np.zeros((3,o.nSpan));
+            #o.U(1,:) = o.s_span; 
+            o.UP = np.zeros((3,o.nSpan));
+            for j in range(o.nf):
+                o.U [0:3,:] = o.U [0:3,:] + o.gzf[j]  * o.PhiU[j][0:3,:]
+                o.UP[0:3,:] = o.UP[0:3,:] + o.gzpf[j] * o.PhiU[j][0:3,:]
+                o.V [0:3,:] = o.V [0:3,:] + o.gzf[j]  * o.PhiV[j][0:3,:]
+                o.K [0:3,:] = o.K [0:3,:] + o.gzf[j]  * o.PhiK[j][0:3,:]
+            o.V_tot=o.V+o.V0;
+            o.K_tot=o.K+o.K0;
+
+            # Position of mean line
+            o.s_P=o.s_P0+o.U;
+
+            # Position of deflected COG
+            # TODO TODO TODO mean_axis not x
+            o.rho_G      = np.zeros((3,o.nSpan))
+            o.rho_G[1,:] = o.rho_G0_inS[1,:]*np.cos(o.V_tot[0,:])-o.rho_G0_inS[2,:]*np.sin(o.V_tot[0,:]);
+            o.rho_G[2,:] = o.rho_G0_inS[1,:]*np.sin(o.V_tot[0,:])+o.rho_G0_inS[2,:]*np.cos(o.V_tot[0,:]);
+            o.s_G = o.s_P+o.rho_G;
+            # Alternative:
+            #rho_G2     = zeros(3,o.nSpan);
+            #rho_G2(2,:) = o.rho_G0(2,:).*cos(o.V(1,:))-o.rho_G0(3,:).*sin(o.V(1,:));
+            #rho_G2(3,:) = o.rho_G0(2,:).*sin(o.V(1,:))+o.rho_G0(3,:).*cos(o.V(1,:));
+            #compare(o.rho_G,rho_G2,'rho_G');
+            # Position of connection point
+            print('TODO connection points')
+            #for ic=1:length(o.Connections)
+            #    iNode=o.Connections{ic}.ParentNode;
+            #    %o.Connections{ic}.s_C_inB = o.U(1:3,iNode);
+            #    o.Connections{ic}.s_C_inB = o.s_P(1:3,iNode);
+
+    @property
+    def nSpan(B):
+        return len(B.s_span)
+
+
+# --------------------------------------------------------------------------------}
+# --- Uniform Beam Body 
+# --------------------------------------------------------------------------------{
+class UniformBeamBody(BeamBody):
+    def __init__(B, Name, nShapes, nSpan, L, EI0, m, Mtop=0, jxxG=None, GKt=None, bAxialCorr=True, bCompatibility=False, bStiffnessFromGM=False):
+
+        import beams.theory as bt
+        if jxxG is None:
+            jxxG=0
+        if GKt is None:
+            GKt=0
+
+        A=1; rho=A*m;
+        x=np.linspace(0,L,nSpan);
+        # Mode shapes
+        freq,s_span,U,V,K = bt.UniformBeamBendingModes('unloaded-topmass-clamped-free',EI0,rho,A,L,x=x,Mtop=Mtop)
+        PhiU = np.zeros((nShapes,3,nSpan)) # Shape
+        PhiV = np.zeros((nShapes,3,nSpan)) # Slope
+        PhiK = np.zeros((nShapes,3,nSpan)) # Curvature
+        for j in np.arange(nShapes):  
+            PhiU[j][2,:] = U[j,:] # Setting modes along z
+            PhiV[j][2,:] = V[j,:]
+            PhiK[j][2,:] = K[j,:]
+        m       = m    * np.ones(nSpan)
+        jxxG    = jxxG * np.ones(nSpan)
+        EI      = np.zeros((3,nSpan))
+        EI[1,:] = EI0
+        EI[2,:] = EI0
+        GKt     = GKt  * np.ones(nSpan)
+        
+        # --- Straight undeflected shape (and COG)
+        s_P0      = np.zeros((3,nSpan))
+        s_P0[0,:] = x
+
+	# Create a beam body
+        super(UniformBeamBody,B).__init__(s_span, s_P0, m, PhiU, PhiV, PhiK, EI, jxxG=jxxG, bAxialCorr=bAxialCorr)
+
+
+# --------------------------------------------------------------------------------}
+# --- FAST Beam body 
+# --------------------------------------------------------------------------------{
+class FASTBeamBody(BeamBody):
+    def __init__(B,body_type,ED,inp,nShapes=2,main_axis='x',nSpan=40,bAxialCorr=False):
+        """ 
+        INPUTS:
+           nSpan: number of spanwise station used (interpolated from input)
+                  Use -1 or None to use number of stations from input file
+        """
+        # --- Reading coefficients
+        exp = np.arange(2,7)
+        if body_type.lower()=='blade':
+            coeff = np.array([[ inp['BldFl1Sh(2)'], inp['BldFl2Sh(2)'], inp['BldEdgSh(2)']],
+                              [ inp['BldFl1Sh(3)'], inp['BldFl2Sh(3)'], inp['BldEdgSh(3)']],
+                              [ inp['BldFl1Sh(4)'], inp['BldFl2Sh(4)'], inp['BldEdgSh(4)']],
+                              [ inp['BldFl1Sh(5)'], inp['BldFl2Sh(5)'], inp['BldEdgSh(5)']],
+                              [ inp['BldFl1Sh(6)'], inp['BldFl2Sh(6)'], inp['BldEdgSh(6)']]])
+
+        elif body_type.lower()=='tower':
+            coeff = np.array([[ inp['TwFAM1Sh(2)'], inp['TwFAM2Sh(2)'], inp['TwSSM1Sh(2)'], inp['TwSSM2Sh(2)']],
+                              [ inp['TwFAM1Sh(3)'], inp['TwFAM2Sh(3)'], inp['TwSSM1Sh(3)'], inp['TwSSM2Sh(3)']],
+                              [ inp['TwFAM1Sh(4)'], inp['TwFAM2Sh(4)'], inp['TwSSM1Sh(4)'], inp['TwSSM2Sh(4)']],
+                              [ inp['TwFAM1Sh(5)'], inp['TwFAM2Sh(5)'], inp['TwSSM1Sh(5)'], inp['TwSSM2Sh(5)']],
+                              [ inp['TwFAM1Sh(6)'], inp['TwFAM2Sh(6)'], inp['TwSSM1Sh(6)'], inp['TwSSM2Sh(6)']]])
+        else:
+            raise Exception('Body type not supported {}'.format(body_type))
+        nShpMax=coeff.shape[1]
+        if nShapes>nShpMax:
+            raise Exception('A maximum of {} shapes function possible with FAST {} body'.format(nShpMax,body_type))
+
+        # --- Structural properties
+        if body_type.lower()=='blade':
+            prop     = inp['BldProp']
+            span_max = ED['TipRad']   # TODO TODO do somthing about hub rad
+            s_bar, m, EIFlp, EIEdg  =prop[:,0], prop[:,3], prop[:,4], prop[:,5]
+
+        elif body_type.lower()=='tower':
+            prop     = inp['TowProp']
+            span_max = ED['TowerHt']-ED['TowerBsHt']
+            s_bar, m, EIFlp, EIEdg  = prop[:,0], prop[:,1], prop[:,2], prop[:,3]
+
+        # --- Interpolating structural properties
+        if nSpan is None or nSpan<0:
+            nSpan  = len(prop[:,0])
+        s_span     = np.linspace(0,span_max,nSpan)
+        m          = np.interp(s_span/span_max,s_bar,m)
+        EIFlp      = np.interp(s_span/span_max,s_bar,EIFlp)
+        EIEdg      = np.interp(s_span/span_max,s_bar,EIEdg)
+
+        # --- Definition of main directions
+        ShapeDir=np.zeros(nShpMax).astype(int)
+        DirNames=['x','y','z']
+        EI =np.zeros((3,nSpan))
+        if main_axis=='x':
+            iMain = 0  # longitudinal axis along x
+            ShapeDir[0:2] = 2 # First two shapes are along z (flapwise/Fore-Aft)
+            ShapeDir[2:]  = 1 # Third shape along along y (edgewise/Side-Side) Sign...
+            EI[2,:] = EIFlp
+            EI[1,:] = EIEdg
+        elif main_axis=='z':
+            iMain = 2  # longitudinal axis along z
+            ShapeDir[0:2] = 0 # First two shapes are along x (flapwise/Fore-Aft)
+            ShapeDir[2:]  = 1 # Third shape along along y (edgewise/Side-Side) Sign...
+            EI[0,:] = EIFlp
+            EI[1,:] = EIEdg
+        else:
+            raise NotImplementedError()
+
+        # --- Undeflected shape
+        s_P0          = np.zeros((3,nSpan))
+        s_P0[iMain,:] = s_span 
+        # TODO blade COG
+        jxxG=m*0
+
+        # --- Shape functions
+        PhiU = np.zeros((nShapes,3,nSpan)) # Shape
+        PhiV = np.zeros((nShapes,3,nSpan)) # Slope
+        PhiK = np.zeros((nShapes,3,nSpan)) # Curvature
+        for j in np.arange(nShapes):
+            iAxis = ShapeDir[j]
+            PhiU[j][iAxis,:], PhiV[j][iAxis,:], PhiK[j][iAxis,:] = polymode(s_span,coeff[:,j],exp)
+
+        super(FASTBeamBody,B).__init__(s_span, s_P0, m, PhiU, PhiV, PhiK, EI, jxxG=jxxG, bAxialCorr=bAxialCorr, bOrth=body_type=='blade')
+
+        # --- Storing data in object
+        B.main_axis = main_axis # TODO
+
+
 
 
 

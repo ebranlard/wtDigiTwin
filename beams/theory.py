@@ -28,17 +28,16 @@ def UniformBeamBendingModes(Type,EI,rho,A,L,w=None,x=None,Mtop=0,norm='tip_norm'
             #B  = [1.87510407, 4.69409113, 7.85475744,10.99554073,14.13716839, (2*6-1)*np.pi/2];
             #S  = [0.734095514 1.018467319 0.999224497 1.000033553 0.999998550 1];
             B = np.zeros(nModes)
-            for i in np.arange(len(B)):
+            for i in np.arange(nModes):
                 B[i] = sciopt.fsolve(lambda x: 1 + np.cosh(x) * np.cos(x), (2*(i+1)-1)*np.pi/2)
         elif 'unloaded-topmass-clamped-free' == (Type.lower()):
-                # The geometrical stiffning is not accounted for here
-                if Mtop is not None:
-                    raise Exception('Please specify value for Mtop for %s',Type)
-                Mtop = p.Mtop
-                M = rho * A * L
-                B = np.zeros((1,nModes))
-                for i in np.arange(len(B)):
-                    B[i] = sciopt.fsolve(lambda x: 1+np.cosh(x)*np.cos(x)-x*Mtop/M*(np.sin(x)*np.cosh(x)-np.cos(x)*np.sinh(x)),(2*(i+1)-1)*np.pi/2)
+            # The geometrical stiffning is not accounted for here
+            if Mtop is None:
+                raise Exception('Please specify value for Mtop for %s',Type)
+            M = rho * A * L
+            B = np.zeros(nModes)
+            for i in np.arange(nModes):
+                B[i] = sciopt.fsolve(lambda x: 1+np.cosh(x)*np.cos(x)-x*Mtop/M*(np.sin(x)*np.cosh(x)-np.cos(x)*np.sinh(x)),(2*(i+1)-1)*np.pi/2)
         else:
             raise Exception('unknown type %s',Type)
         #S  = ( sinh(B)-sin(B) ) ./ ( cosh(B) + cos(B));  # Sigma
@@ -51,7 +50,7 @@ def UniformBeamBendingModes(Type,EI,rho,A,L,w=None,x=None,Mtop=0,norm='tip_norm'
         ModesU = np.zeros((len(B),len(x0)))
         ModesV = np.zeros((len(B),len(x0)))
         ModesK = np.zeros((len(B),len(x0)))
-        for i in np.arange(len(B)):
+        for i in np.arange(nModes):
             ModesU[i,:] =            SS[i] * (np.cosh(B[i]*x0) - np.cos(B[i] * x0)) - CC[i] * (np.sinh(B[i] * x0) - np.sin(B[i] * x0))
             ModesV[i,:] = B[i]    * (SS[i] * (np.sinh(B[i]*x0) + np.sin(B[i] * x0)) - CC[i] * (np.cosh(B[i] * x0) - np.cos(B[i] * x0)))
             ModesK[i,:] = B[i]**2 * (SS[i] * (np.cosh(B[i]*x0) + np.cos(B[i] * x0)) - CC[i] * (np.sinh(B[i] * x0) + np.sin(B[i] * x0)))

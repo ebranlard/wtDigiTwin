@@ -93,4 +93,9 @@ def FASTmodel2TNSB(EDfile,nB=3,nShapes_twr=2, nShapes_bld=0,nSpan_twr=101,nSpan_
 
 if __name__=='__main__':
     np.set_printoptions(linewidth=500)
-    Struct= FASTmodel2TNSB(EDfile='../_data/NREL5MW_ED.dat', DEBUG=False)
+    Struct= FASTmodel2TNSB(EDfile='_data/NREL5MW_ED.dat', nShapes_twr=1,nShapes_bld=0, DEBUG=False)
+    print('Fields available in `Struct`:')
+    print(Struct.__dict__.keys())
+    print('Mass matrix:')
+    print(Struct.MM)
+    print(Struct.KK)

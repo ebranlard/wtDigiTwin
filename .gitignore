@@ -1,4 +1,6 @@
 __pycache__
 *.pyc
+*.egg-info
 *_TODO.m
 TODO
+*TODO*

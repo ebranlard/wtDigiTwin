@@ -4,8 +4,8 @@ import copy
 import matplotlib.pyplot as plt
 import os
 
-from yams import *
-from TNSB import *
+from .yams import *
+from .TNSB import *
 import weio
 
 # --------------------------------------------------------------------------------}

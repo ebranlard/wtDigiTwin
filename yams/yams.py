@@ -5,10 +5,7 @@ Reference:
 
 import numpy as np
 import unittest
-try:
-    from .flexibility import GMBeam, GKBeam, polymode
-except:
-    from flexibility import GMBeam, GKBeam, polymode
+from .flexibility import GMBeam, GKBeam, GKBeamStiffnening, polymode
 
 # --------------------------------------------------------------------------------}
 # --- Bodies 
@@ -78,7 +75,7 @@ def fGMRigidBody(Mass,J,rho):
 # --- Beam Body 
 # --------------------------------------------------------------------------------{
 class BeamBody(Body):
-    def __init__(B, s_span, s_P0, m, PhiU, PhiV, PhiK, EI, jxxG=None, s_G0=None, bAxialCorr=False, bOrth=False):
+    def __init__(B, s_span, s_P0, m, PhiU, PhiV, PhiK, EI, jxxG=None, s_G0=None, bAxialCorr=False, bOrth=False, Mtop=0, bStiffening=True, gravity=None):
         """ 
           Points P0 - Undeformed mean line of the body
         """
@@ -100,9 +97,15 @@ class BeamBody(Body):
         B.s_G    = B.s_G0
         B.bAxialCorr = bAxialCorr
         B.bOrth      = bOrth
+        B.Mtop       = Mtop
 
         B.computeMassMatrix()
         B.KK = GKBeam(B.s_span, B.EI, B.PhiK, bOrth=B.bOrth)
+        if bStiffening:
+            pass
+            #print('>>>>>>>>>>>>>> TODO TODO TODO Geometrical stiffnening')
+            #KKg = GKBeamStiffnening(B.s_span, B.PhiV, gravity, m, Mtop)
+            #print(KKg)
         B.DD = np.zeros((6+B.nf,6+B.nf))
 
         # TODO
@@ -202,14 +205,14 @@ class UniformBeamBody(BeamBody):
         s_P0[0,:] = x
 
 	# Create a beam body
-        super(UniformBeamBody,B).__init__(s_span, s_P0, m, PhiU, PhiV, PhiK, EI, jxxG=jxxG, bAxialCorr=bAxialCorr)
+        super(UniformBeamBody,B).__init__(s_span, s_P0, m, PhiU, PhiV, PhiK, EI, jxxG=jxxG, bAxialCorr=bAxialCorr, Mtop=Mtop)
 
 
 # --------------------------------------------------------------------------------}
 # --- FAST Beam body 
 # --------------------------------------------------------------------------------{
 class FASTBeamBody(BeamBody):
-    def __init__(B,body_type,ED,inp,nShapes=2,main_axis='x',nSpan=40,bAxialCorr=False):
+    def __init__(B,body_type,ED,inp,Mtop,nShapes=2,main_axis='x',nSpan=40,bAxialCorr=False):
         """ 
         INPUTS:
            nSpan: number of spanwise station used (interpolated from input)
@@ -251,6 +254,7 @@ class FASTBeamBody(BeamBody):
         if nShapes>nShpMax:
             raise Exception('A maximum of {} shapes function possible with FAST {} body'.format(nShpMax,body_type))
 
+        gravity=ED['Gravity']
 
         # --- Interpolating structural properties
         m *= mass_fact
@@ -294,7 +298,8 @@ class FASTBeamBody(BeamBody):
             iAxis = ShapeDir[j]
             PhiU[j][iAxis,:], PhiV[j][iAxis,:], PhiK[j][iAxis,:] = polymode(s_span,coeff[:,j],exp)
 
-        super(FASTBeamBody,B).__init__(s_span, s_P0, m, PhiU, PhiV, PhiK, EI, jxxG=jxxG, bAxialCorr=bAxialCorr, bOrth=body_type=='blade')
+
+        super(FASTBeamBody,B).__init__(s_span, s_P0, m, PhiU, PhiV, PhiK, EI, jxxG=jxxG, bAxialCorr=bAxialCorr, bOrth=body_type=='blade', gravity=gravity,Mtop=Mtop)
 
         # Damping
         B.DD=np.zeros((6+nShapes,6+nShapes))

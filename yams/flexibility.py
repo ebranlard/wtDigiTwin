@@ -8,6 +8,17 @@ Flexible beam tools:
 Reference:
      [1]: Flexible multibody dynamics using joint coordinates and the Rayleigh-Ritz approximation: the general framework behind and beyond Flex
 '''
+
+def fcumtrapzlr(s_span, p):
+    """ Cumulative trapezoidal integration, flipped left-right 
+    Useful to return the following:
+         P(x) = \int_x^R p(r) dr
+    """
+    P = - sciint.cumtrapz( p[-1::-1], s_span[-1::-1],)[-1::-1] 
+    P = np.concatenate((P,[0]))
+    return P
+
+
 def polymode(x,coeff,exp):
     """ 
     Computes a shape function described as a polynomial expression y = a_i x^e_i
@@ -64,8 +75,44 @@ def integrationWeights(s_span,m):
     return IW,IW_x,IW_m,IW_xm
 
 
+def GKBeamStiffnening(s_span, dU, gravity, m, Mtop, bSelfWeight=True, bMtop=True):
+    """ 
+       Computes geometrical stiffnening for a beam
 
-def GKBeam(s_span, EI, ddU, bOrth=False):    #Compute Kgg
+    OUTPUTS:
+     - KKg: Geometrical stiffeness matrix. 
+    """
+    nSpan = len(s_span)
+    nf    = len(dU)
+    KKg = np.zeros((6+nf,6+nf))
+    # --- Axial force 
+    Pacc_SW = fcumtrapzlr(s_span, -m * gravity)
+    Pacc_MT = -Mtop * gravity*np.ones(nSpan)
+    Pacc    = np.zeros(nSpan) 
+    # TopMass contribution to Pacc
+    print('Gravity',gravity)
+    print('Mtop   ',Mtop)
+    print('m   '   ,m)
+    print('dU  '   ,dU)
+    if bMtop:
+        Pacc=Pacc+Pacc_MT
+    if bSelfWeight:
+        Pacc=Pacc+Pacc_SW
+    # Method 2
+    KKCorr = np.zeros((nf,nf))
+    for i in range(0,nf):
+        for j in range(0,nf):
+            #xx=trapz(s_span, Pacc .* PhiV{i}(1,:).* o.PhiV{j}(1,:));
+            yy=np.trapz(Pacc * dU[i][1,:] * dU[j][1,:] , s_span )
+            zz=np.trapz(Pacc * dU[i][2,:] * dU[j][2,:] , s_span )
+            KKCorr[i,j]=yy+zz;
+    print('KKCorr')
+    print(KKCorr)
+    KKg[6:,6:] = KKCorr
+    return KKg
+
+
+def GKBeam(s_span, EI, ddU, bOrth=False):
     """ 
        Computes generalized stiffness matrix for a beam
        Eq.(20) from [1]
@@ -73,6 +120,10 @@ def GKBeam(s_span, EI, ddU, bOrth=False):    #Compute Kgg
 
     OPTIONAL INPUTS:
      - bOrth : if true, enforce orthogonality of modes
+
+    OUTPUTS:
+     - KK0: Stiffness matrix without geometrical stiffening
+     - The total stiffness matrix should then be KK0+KKg
     """
     nf = len(ddU)
     KK0 = np.zeros((6+nf,6+nf))

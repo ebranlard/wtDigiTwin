@@ -202,6 +202,8 @@ def manual_assembly(Twr,Nac,Sft,Blds,q,r_ET_inE,r_TN_inT,r_NS_inN,r_SR_inS,main_
     Struct.KK   = KK
     Struct.DD   = DD
 
+    Struct.iPsi = iPsi # Index 
+
     return Struct
 
 

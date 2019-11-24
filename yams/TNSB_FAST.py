@@ -4,17 +4,23 @@ import copy
 import matplotlib.pyplot as plt
 import os
 
-from .yams import FASTBeamBody, RigidBody
-from .TNSB import *
+try:
+    from .yams import FASTBeamBody, RigidBody
+    from .TNSB import *
+except:
+    from yams import FASTBeamBody, RigidBody
+    from TNSB import *
+
 import weio
 
 # --------------------------------------------------------------------------------}
 # --- Creating a TNSB model from a FAST model
 # --------------------------------------------------------------------------------{
-def FASTmodel2TNSB(ED_or_FST_file,nB=3,nShapes_twr=2, nShapes_bld=0,nSpan_twr=101,nSpan_bld=61,bHubMass=1,bNacMass=1,bBldMass=1,DEBUG=False,main_axis ='x'):
+def FASTmodel2TNSB(ED_or_FST_file,nB=3,nShapes_twr=2, nShapes_bld=0,nSpan_twr=101,nSpan_bld=61,bHubMass=1,bNacMass=1,bBldMass=1,DEBUG=False,main_axis ='x',bStiffening=True, assembly='manual', q=None):
     
     nDOF = 1 + nShapes_twr + nShapes_bld * nB # +1 for Shaft
-    q = np.zeros((nDOF,1)) # TODO, full account of q not done
+    if q is None:
+        q = np.zeros((nDOF,1)) # TODO, full account of q not done
 
     # --- Input data from ED file
     ext=os.path.splitext(ED_or_FST_file)[1]
@@ -42,26 +48,29 @@ def FASTmodel2TNSB(ED_or_FST_file,nB=3,nShapes_twr=2, nShapes_bld=0,nSpan_twr=10
         r_NS_inN    = np.array([[ED['Twr2Shft']]               ,[0],[0]]) # S on tower axis
         r_SR_inS    = np.array([[0]                            ,[0],[ED['OverHang']]] ) # S and R 
         r_SGhub_inS = np.array([[0]                            ,[0],[ED['OverHang']+ED['HubCM']]]   ) # 
-    else:
-        raise NotImplementedError()
+    elif main_axis=='z':
+        r_ET_inE    = np.array([[0]                         ,[0],[ED['TowerBsHt']]               ]) # NOTE: could be used to get hub height
+        r_TN_inT    = np.array([[0]                         ,[0],[ED['TowerHt']-ED['TowerBsHt']] ])
+        r_NGnac_inN = np.array([[ED['NacCMxn']]             ,[0],[ED['NacCMzn']]                 ])
+        r_NS_inN    = np.array([[0]                         ,[0],[ED['Twr2Shft']]                ]) # S on tower axis
+        r_SR_inS    = np.array([[ED['OverHang']]            ,[0],[0]]                             ) # S and R
+        r_SGhub_inS = np.array([[ED['OverHang']+ED['HubCM']],[0],[0]]                             ) # 
+
     r_RGhub_inS = - r_SR_inS + r_SGhub_inS
 
-    if main_axis=='x':
-        M_hub=ED['HubMass']*bHubMass
-        IR_hub = np.zeros((3,3))
-        IR_hub[0,0] = 0
-        IR_hub[1,1] = 0
-        IR_hub[2,2] = ED['HubIner'] + ED['GenIner']*ED['GBRatio']**2
-        IR_hub = IR_hub * bHubMass
+    M_hub=ED['HubMass']*bHubMass
+    M_nac   = ED['NacMass'] *bNacMass
+    IR_hub = np.zeros((3,3))
+    I0_nac=np.zeros((3,3)) 
 
-        M_nac   = ED['NacMass'] *bNacMass
-        I0_nac=np.zeros((3,3)) 
+    if main_axis=='x':
+        IR_hub[2,2] = ED['HubIner'] + ED['GenIner']*ED['GBRatio']**2
         I0_nac[0,0]= ED['NacYIner']
-        I0_nac[1,1]=0
-        I0_nac[2,2]=0
-        I0_nac = I0_nac*bNacMass
-    else:
-        raise NotImplementedError()
+    elif main_axis=='z':
+        IR_hub[0,0] = ED['HubIner'] + ED['GenIner']*ED['GBRatio']**2
+        I0_nac[2,2] = ED['NacYIner']
+    IR_hub = IR_hub * bHubMass
+    I0_nac = I0_nac * bNacMass
 
     # Inertias not at COG...
     IG_hub = fTranslateInertiaMatrix(IR_hub, M_hub, np.array([0,0,0]), r_RGhub_inS)
@@ -82,7 +91,12 @@ def FASTmodel2TNSB(ED_or_FST_file,nB=3,nShapes_twr=2, nShapes_bld=0,nSpan_twr=10
     Nac=RigidBody('Nacelle',M_nac,IG_nac,r_NGnac_inN);
     M_RNA=sum([B.Mass for B in Blds]) + Sft.Mass + Nac.Mass;
     # Tower Body
-    Twr = FASTBeamBody('tower',ED,twr,Mtop=M_RNA,nShapes=nShapes_twr, nSpan=nSpan_twr, main_axis=main_axis)
+    Twr = FASTBeamBody('tower',ED,twr,Mtop=M_RNA,nShapes=nShapes_twr, nSpan=nSpan_twr, main_axis=main_axis,bStiffening=bStiffening)
+    print('tilt       ', tilt_up)
+    print('M_RNA      ', M_RNA)
+    print('Gravity    ', ED['Gravity'])
+    print('Stiffnening', bStiffening)
+    print('Ttw.KKg   \n', Twr.KKg[6:,6:])
     if DEBUG:
         print('IG_hub')
         print(IG_hub)
@@ -97,15 +111,149 @@ def FASTmodel2TNSB(ED_or_FST_file,nB=3,nShapes_twr=2, nShapes_bld=0,nSpan_twr=10
     # --------------------------------------------------------------------------------}
     # --- Manual assembly 
     # --------------------------------------------------------------------------------{
-    Struct = manual_assembly(Twr,Nac,Sft,Blds,q,r_ET_inE,r_TN_inT,r_NS_inN,r_SR_inS,main_axis='x',tilt_up=tilt_up,DEBUG=DEBUG)
+    #print('>>>> HACK')
+    #Twr.DD*=0
+#     Nac.MM*=0
+#     Blds[0].MM*=0
+    Blds[1].MM*=0
+    Blds[2].MM*=0
+
+
+    if assembly=='manual':
+        Struct = manual_assembly(Twr,Nac,Sft,Blds,q,r_ET_inE,r_TN_inT,r_NS_inN,r_SR_inS,main_axis=main_axis,tilt_up=tilt_up,DEBUG=DEBUG)
+    else:
+        print('>>>Auto assembly is beta')
+        Struct = auto_assembly(Twr,Nac,Sft,Blds,q,r_ET_inE,r_TN_inT,r_NS_inN,r_SR_inS,main_axis=main_axis,theta_tilt=tilt_up,DEBUG=DEBUG)
+
+
+    Struct.tilt_up=tilt_up # [rad]
+
+    # --- Initial conditions
+    omega_init = ED['RotSpeed']*2*np.pi/60 # rad/s
+    psi_init   = ED['Azimuth']*np.pi/180 # rad
+    FA_init    = ED['TTDspFA']
+    iPsi     = Struct.iPsi
+    nDOFMech = len(Struct.MM)
+    q_init   = np.zeros(2*nDOFMech) # x2, state space
+
+    if nShapes_twr>0:
+        q_init[0] = FA_init
+
+    q_init[iPsi]          = psi_init
+    q_init[nDOFMech+iPsi] = omega_init
+
+    Struct.q_init = q_init
+    if DEBUG:
+        print('Initial conditions:')
+        print(q_init)
+
     return Struct
 
 
+# --------------------------------------------------------------------------------}
+# --- Read Relevant fields from an outb file 
+# --------------------------------------------------------------------------------{
+def readFASTOut():
+    pass
+
+
+
+
 if __name__=='__main__':
+    bStiffening=False
+    nShapes_twr=2
+    nShapes_bld=0
+    nDOF = 1 + nShapes_twr + nShapes_bld * 3
+    q = np.zeros((nDOF,1)) # TODO, full account of q not done
+    q[[0]]=0
+    q[[1]]=0.0
+    q[[2]]=0*np.pi/4.
+
     np.set_printoptions(linewidth=500)
-    Struct= FASTmodel2TNSB(EDfile='_data/NREL5MW_ED.dat', nShapes_twr=1,nShapes_bld=0, DEBUG=False)
-    print('Fields available in `Struct`:')
-    print(Struct.__dict__.keys())
+    assembly='auto'
+    main_axis='z'
+    StructA= FASTmodel2TNSB('../_data/NREL5MW_ED.dat', nShapes_twr=nShapes_twr,nShapes_bld=nShapes_bld, DEBUG=False, assembly=assembly , q=q, main_axis=main_axis, bStiffening=bStiffening)
+    assembly='auto'
+    main_axis='x'
+    StructM= FASTmodel2TNSB('../_data/NREL5MW_ED.dat', nShapes_twr=nShapes_twr,nShapes_bld=nShapes_bld, DEBUG=False, assembly=assembly , q=q, main_axis=main_axis, bStiffening=bStiffening)
+    print('------------------')
+    from scipy.linalg import block_diag
+    RR = np.zeros((3,3))
+    print('RR')
+    RR[0,2]=1 # send z to x
+    RR[1,1]=-1 # send y to -y
+    RR[2,0]=1  # send x to z
+    RR=block_diag(RR,RR)
+    print(RR)
+
+    print('Twr: B_T:')
+    print(StructA.Twr.B_inB)
+    print(StructM.Twr.B_inB)
+    print(StructA.Twr.r_O)
+    print(StructM.Twr.r_O)
+
+    print('Twr.alpha_y:')
+    print(StructA.alpha)
+    print(StructM.alpha)
+
+
+    print('Nac: B_N:')
+    print(StructM.Nac.B_inB)
+    print(np.dot(RR, StructA.Nac.B_inB))
+
+    print('Sft: B_S:')
+    print(StructA.Sft.B_inB)
+    print(np.dot(RR,StructM.Sft.B_inB))
+    print(np.dot(RR,StructM.Sft.BB_inB)-StructA.Sft.BB_inB)
+
+    print('Bld1: B_S:')
+    print(StructA.Blds[0].B_inB)
+    print(np.dot(RR,StructM.Blds[0].B_inB))
+    print(np.dot(RR,StructM.Blds[0].BB_inB)-StructA.Blds[0].BB_inB)
+    print('Bld2: B_S:')
+    print(StructM.Blds[1].B_inB)
+    print(StructA.Blds[1].B_inB)
+#     print(StructM.Blds[1].BB_inB-StructA.Blds[1].BB_inB)
+    print('Bld3: B_S:')
+    print(StructM.Blds[2].B_inB)
+    print(np.dot(RR,StructA.Blds[2].B_inB ))
+    print(np.dot(RR,StructM.Blds[2].BB_inB)-StructA.Blds[2].BB_inB)
+
+
+#     print('Fields available in `Struct`:')
+#     print(Struct.__dict__.keys())
+#     print('Twr Damp matrix:')
+#     print(StructA.Twr.DD)
+#     print(StructM.Twr.DD)
+#     print('Twr KK matrix:')
+#     print(StructA.Twr.KK)
+#     print(StructM.Twr.KK)
+    print('Twr Mass matrix:')
+    print(StructA.Twr.MM[6:,6:])
+    print(StructM.Twr.MM[6:,6:])
+    print(StructA.Twr.MM[6:,6:]-StructM.Twr.MM[6:,6:])
+
+    print('Bld Mass matrix:')
+    print(StructM.Blds[0].MM[3:,3:])
+    print(StructA.Blds[0].MM[3:,3:])
+    print('Bld Mass matrix:')
+    print(np.dot(RR.T,StructM.Blds[0].MM).dot(RR))
+    print(StructA.Blds[0].MM-np.dot(RR.T,StructM.Blds[0].MM).dot(RR))
+#     print(np.dot(StructA.Blds[0].BB_inB.T,StructA.Blds[0].MM).dot(StructA.Blds[0].BB_inB))
+#     print(np.dot(StructM.Blds[0].BB_inB.T,StructM.Blds[0].MM).dot(StructM.Blds[0].BB_inB))
+#     print(StructA.Blds[0].MM-StructM.Blds[0].MM)
+
+    print('Damp matrix:')
+#     print(StructA.DD)
+#     print(StructM.DD)
+    print(StructM.DD-StructA.DD)
+
+    print('Stiff matrix:')
+#     print(StructA.KK)
+#     print(StructM.KK)
+    print(StructM.KK-StructA.KK)
+
     print('Mass matrix:')
-    print(Struct.MM)
-    print(Struct.KK)
+#     print(StructA.MM)
+#     print(StructM.MM)
+    print(StructM.MM-StructA.MM)

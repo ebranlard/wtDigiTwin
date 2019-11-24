@@ -75,7 +75,7 @@ def integrationWeights(s_span,m):
     return IW,IW_x,IW_m,IW_xm
 
 
-def GKBeamStiffnening(s_span, dU, gravity, m, Mtop, bSelfWeight=True, bMtop=True):
+def GKBeamStiffnening(s_span, dU, gravity, m, Mtop, bSelfWeight=True, bMtop=True, main_axis='x'):
     """ 
        Computes geometrical stiffnening for a beam
 
@@ -99,9 +99,16 @@ def GKBeamStiffnening(s_span, dU, gravity, m, Mtop, bSelfWeight=True, bMtop=True
     for i in range(0,nf):
         for j in range(0,nf):
             #xx=trapz(s_span, Pacc .* PhiV{i}(1,:).* o.PhiV{j}(1,:));
-            yy=np.trapz(Pacc * dU[i][1,:] * dU[j][1,:] , s_span )
-            zz=np.trapz(Pacc * dU[i][2,:] * dU[j][2,:] , s_span )
-            KKCorr[i,j]=yy+zz;
+            if main_axis=='x':
+                yy=np.trapz(Pacc * dU[i][1,:] * dU[j][1,:] , s_span )
+                zz=np.trapz(Pacc * dU[i][2,:] * dU[j][2,:] , s_span )
+                KKCorr[i,j]=yy+zz
+            elif main_axis=='z':
+                xx=np.trapz(Pacc * dU[i][0,:] * dU[j][0,:] , s_span )
+                yy=np.trapz(Pacc * dU[i][1,:] * dU[j][1,:] , s_span )
+                KKCorr[i,j]=yy+xx
+            else:
+                raise Exception('Axis not suported')
     #print('KKCorr\n',KKCorr)
     KKg[6:,6:] = KKCorr
     return KKg
@@ -132,7 +139,7 @@ def GKBeam(s_span, EI, ddU, bOrth=False):
     KK0[6:,6:] = Kgg
     return KK0
     
-def GMBeam(s_G, s_span, m, U=None, V=None, jxxG=None, bOrth=False, bAxialCorr=False, IW=None, IW_xm=None, main_axis='', bUseIW=True, V_tot=None, Peq_tot=None):
+def GMBeam(s_G, s_span, m, U=None, V=None, jxxG=None, bOrth=False, bAxialCorr=False, IW=None, IW_xm=None, main_axis='x', bUseIW=True, V_tot=None, Peq_tot=None):
     """
     Computes generalized mass matrix for a beam.
     Eq.(2) from [1]
@@ -166,7 +173,7 @@ def GMBeam(s_G, s_span, m, U=None, V=None, jxxG=None, bOrth=False, bAxialCorr=Fa
 
     # --- Torsion-related variables - Zeros by default
     if jxxG is not None:
-        Jxx = trapzs(jxxG) # Imomx
+        Jxx = trapzs(jxxG) # Imomx  OR Imomz is along z
     else:
         Jxx = 0
     GMJxx=np.zeros(nf);
@@ -177,8 +184,13 @@ def GMBeam(s_G, s_span, m, U=None, V=None, jxxG=None, bOrth=False, bAxialCorr=Fa
                 VJ       = jxxG*V[j][0,:]
                 GMJxx[j] = trapzs(V[j][0,:]*VJ)
                 I_Jxx[j] = trapzs(VJ)
-        else:
-            raise NotImplementedError()
+        elif main_axis=='z':
+            # TODO verify me
+            for j in range(nf):
+                VJ       = jxxG*V[j][2,:]
+                GMJxx[j] = trapzs(V[j][2,:]*VJ)
+                I_Jxx[j] = trapzs(VJ)
+            
 
     # --- Mxx
     M = trapzs(m)
@@ -202,7 +214,9 @@ def GMBeam(s_G, s_span, m, U=None, V=None, jxxG=None, bOrth=False, bAxialCorr=Fa
             Mxt[0,1]=+trapzs(V_tot[2,:]*FT) # m15
             Mxt[0,2]=-trapzs(V_tot[1,:]*FT) # m16
         else:
-            raise NotImplementedError()
+            # TODO TODO TODO VERIFY ME
+            Mxt[2,0]=+trapzs(V_tot[1,:]*FT) # m15
+            Mxt[2,1]=-trapzs(V_tot[0,:]*FT) # m16
     #print('Mxt\n',Mxt)
 
     # --- Mxg = \int Phi dm  =   Psi
@@ -220,47 +234,83 @@ def GMBeam(s_G, s_span, m, U=None, V=None, jxxG=None, bOrth=False, bAxialCorr=Fa
                 for j in range(nf):
                     Mxg[0,j]= trapzs(-V[j][1,:]*V_tot[1,:]*FT - V[j][2,:]*V_tot[2,:]*FT); 
             else:
-                raise NotImplementedError()
+                for j in range(nf):
+                    Mxg[2,j]= trapzs(-V[j][0,:]*V_tot[0,:]*FT - V[j][1,:]*V_tot[1,:]*FT); 
         elif Peq_tot is not None:
             if main_axis=='x':
                 for j in range(nf):
                     Mxg[0,j] = trapzs(U[j][1,:]*Peq_tot[1,:] + U[j][2,:]*Peq_tot[2,:] );
             else:
-                raise NotImplementedError()
+                for j in range(nf):
+                    Mxg[2,j] = trapzs(U[j][0,:]*Peq_tot[0,:] + U[j][1,:]*Peq_tot[1,:] );
         else:
             raise Exception('Please provide Vtot of Peq_tot for axial correction');
     #print('Mxg\n',Mxg)
         
     # --- Mtt = - \int [~s][~s] dm
-    if main_axis=='x' and bUseIW:
-        s00= np.sum(IW_xm * s_G[0,:]);
-        s01= np.sum(IW_xm * s_G[1,:]);
-        s02= np.sum(IW_xm * s_G[2,:]);
-    else:
+
+    if main_axis=='x':
+        if bUseIW:
+            s00= np.sum(IW_xm * s_G[0,:]);
+            s01= np.sum(IW_xm * s_G[1,:]);
+            s02= np.sum(IW_xm * s_G[2,:]);
+        else:
+            s00 = trapzs(s_G[0,:]*s_G[0,:]*m)
+            s01 = trapzs(s_G[0,:]*s_G[1,:]*m)
+            s02 = trapzs(s_G[0,:]*s_G[2,:]*m)
+
+        s11 = trapzs(s_G[1,:]*s_G[1,:]*m)
+        s12 = trapzs(s_G[1,:]*s_G[2,:]*m)
+        s22 = trapzs(s_G[2,:]*s_G[2,:]*m)
+    elif main_axis=='z':
+        if bUseIW:
+            s02= np.sum(IW_xm * s_G[0,:]);
+            s12= np.sum(IW_xm * s_G[1,:]);
+            s22= np.sum(IW_xm * s_G[2,:]);
+        else:
+            s02 = trapzs(s_G[2,:]*s_G[0,:]*m)
+            s12 = trapzs(s_G[2,:]*s_G[1,:]*m)
+            s22 = trapzs(s_G[2,:]*s_G[2,:]*m)
+
+        s11 = trapzs(s_G[1,:]*s_G[1,:]*m)
         s00 = trapzs(s_G[0,:]*s_G[0,:]*m)
         s01 = trapzs(s_G[0,:]*s_G[1,:]*m)
-        s02 = trapzs(s_G[0,:]*s_G[2,:]*m)
-    s11 = trapzs(s_G[1,:]*s_G[1,:]*m)
-    s12 = trapzs(s_G[1,:]*s_G[2,:]*m)
-    s22 = trapzs(s_G[2,:]*s_G[2,:]*m)
+
     Mtt = np.zeros((3,3))
-    Mtt[0,0] = s11 + s22 + Jxx;   Mtt[0,1] = -s01;       Mtt[0,2] = -s02
+    Mtt[0,0] = s11 + s22    ;     Mtt[0,1] = -s01;       Mtt[0,2] = -s02
     Mtt[1,0] = -s01;              Mtt[1,1] = s00 + s22;  Mtt[1,2] = -s12
     Mtt[2,0] = -s02;              Mtt[2,1] = -s12;       Mtt[2,2] = s00+s11
+    if main_axis=='x':
+        Mtt[0,0] += Jxx
+    else:
+        Mtt[2,2] += Jxx
     #print('Mtt\n',Mtt)
 
     # --- Mtg  = \int [~s] Phi dm  
     Mtg      = np.zeros((3,nf))
-    if main_axis=='x' and bUseIW:
-        for j in range(nf):
-            Mtg[0,j] = trapzs((-s_G[2,:]*U[j][1,:] + s_G[1,:]*U[j][2,:])*m) + I_Jxx[j]
-            Mtg[1,j] = trapzs(  (+s_G[2,:]*U[j][0,:]*m)) - sum(IW_xm*U[j][2,:]);
-            Mtg[2,j] = trapzs(  (-s_G[1,:]*U[j][0,:]*m)) + sum(IW_xm*U[j][1,:]);
-    else:
-        for j in range(nf):
-            Mtg[0,j] = trapzs((-s_G[2,:]*U[j][1,:] + s_G[1,:]*U[j][2,:])*m) + I_Jxx[j]
-            Mtg[1,j] = trapzs(( s_G[2,:]*U[j][0,:] - s_G[0,:]*U[j][2,:])*m)
-            Mtg[2,j] = trapzs((-s_G[1,:]*U[j][0,:] + s_G[0,:]*U[j][1,:])*m)
+    if main_axis=='x':
+        if bUseIW:
+            for j in range(nf):
+                Mtg[0,j] = trapzs((-s_G[2,:]*U[j][1,:] + s_G[1,:]*U[j][2,:])*m) + I_Jxx[j]
+                Mtg[1,j] = trapzs(  (+s_G[2,:]*U[j][0,:]*m)) - sum(IW_xm*U[j][2,:]);
+                Mtg[2,j] = trapzs(  (-s_G[1,:]*U[j][0,:]*m)) + sum(IW_xm*U[j][1,:]);
+        else:
+            for j in range(nf):
+                Mtg[0,j] = trapzs((-s_G[2,:]*U[j][1,:] + s_G[1,:]*U[j][2,:])*m) + I_Jxx[j]
+                Mtg[1,j] = trapzs(( s_G[2,:]*U[j][0,:] - s_G[0,:]*U[j][2,:])*m)
+                Mtg[2,j] = trapzs((-s_G[1,:]*U[j][0,:] + s_G[0,:]*U[j][1,:])*m)
+    elif main_axis=='z':
+        if bUseIW:
+            for j in range(nf):
+                Mtg[0,j] = trapzs((-sum(IW_xm*U[j][1,:]) + s_G[1,:]*U[j][2,:])*m) 
+                Mtg[1,j] = trapzs(( sum(IW_xm*U[j][0,:]) - s_G[0,:]*U[j][2,:])*m)
+                Mtg[2,j] = trapzs((-s_G[1,:]*U[j][0,:] + s_G[0,:]*U[j][1,:])*m)+ I_Jxx[j]
+        else:
+            for j in range(nf):
+                Mtg[0,j] = trapzs((-s_G[2,:]*U[j][1,:] + s_G[1,:]*U[j][2,:])*m) 
+                Mtg[1,j] = trapzs(( s_G[2,:]*U[j][0,:] - s_G[0,:]*U[j][2,:])*m)
+                Mtg[2,j] = trapzs((-s_G[1,:]*U[j][0,:] + s_G[0,:]*U[j][1,:])*m)+ I_Jxx[j]
+
     #print('Mtg\n',Mtg)
         
     # --- Mgg  = \int Phi^t Phi dm  =  Sum Upsilon_kl(i,i)

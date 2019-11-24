@@ -14,6 +14,7 @@ from numpy import eye, cross, cos ,sin
 def Matrix(m):
 	return np.asarray(m)
 def colvec(v): 
+    v=np.asarray(v).ravel()
     return np.array([[v[0]],[v[1]],[v[2]]])
 
 
@@ -48,18 +49,26 @@ class Connection():
             j.R_ci=j.R_ci_0
         elif j.Type=='SphericalJoint':
             R=eye(3)
-            raise NotImplementedError()
-#           for ir=1:length(j.JointRotations)
-#               switch j.JointRotations{ir}
-#                   case 'x'; I=[1;0;0];
-#                   case 'y'; I=[0;1;0];
-#                   case 'z'; I=[0;0;1];
-#                   otherwise; error('Here');
-#               % Setting Bhat column by column
-#               j.B_ci(4:6,ir) = R*I; % NOTE: needs to be done before R updates
-#               % Updating rotation matrix
-#               R=R*fRot(j.JointRotations{ir}, myq(ir));
-            j.R_ci=R*j.R_ci_0;
+            myq    = q   [j.I_DOF,0];
+            #myqdot = qdot[j.I_DOF];
+
+            for ir,rot in enumerate(j.JointRotations):
+                if rot=='x':
+                    I=np.array([1,0,0])
+                    Rj=R_x( myq[ir] )
+                elif rot=='y':
+                    I=np.array([0,1,0])
+                    Rj=R_y( myq[ir] )
+                elif rot=='z':
+                    I=np.array([0,0,1])
+                    Rj=R_z( myq[ir] )
+                else:
+                    raise Exception()
+                # Setting Bhat column by column
+                j.B_ci[3:,ir] = np.dot(R,I) # NOTE: needs to be done before R updates
+                # Updating rotation matrix
+                R      = np.dot(R , Rj )
+                j.R_ci = np.dot(R, j.R_ci_0 )
 
 
 # --------------------------------------------------------------------------------}
@@ -78,13 +87,29 @@ class Body(object):
         o.r_O = x_0      # position of body origin in global coordinates
         o.R_0b=R_0b      # transformation matrix from body to global
 
-    def connectTo(self, Child, Point=None, Type=None, RelOrientation=None):
+    def connectTo(self, Child, Point=None, Type=None, RelOrientation=None, JointRotations=None):
         if Type =='Rigid':
             c=Connection(Type, RelPoint=Point, RelOrientation = RelOrientation)
         else: # TODO first node, last node
-            c=Connection(Type, RelPoint=RelPoint, RelOrientation=RelOrientation)
+            c=Connection(Type, RelPoint=Point, RelOrientation=RelOrientation, JointRotations=JointRotations)
         self.Children.append(Child)
         self.Connections.append(c)
+
+    def setupDOFIndex(o,n):
+        nForMe=o.nf
+        # Setting my dof index
+        o.I_DOF=n+ np.arange(nForMe) 
+        # Update
+        n=n+nForMe
+        for child,conn in zip(o.Children,o.Connections):
+            # Connection first
+            nForConn=conn.nj;
+            conn.I_DOF=n+np.arange(nForConn)
+            # Update
+            n=n+nForConn;
+            # Then Children
+            n=child.setupDOFIndex(n)
+        return n
 
     def __repr__(B):
         pass
@@ -111,27 +136,42 @@ class Body(object):
         for ic,(body_i,conn_pi) in enumerate(zip(p.Children,p.Connections)):
             # Flexible influence to connection point
             R_pc  = p.R_bc
+            #print('R_pc')
+            #print(R_pc)
             Bx_pc = p.Bhat_x_bc
             Bt_pc = p.Bhat_t_bc
             # Joint influence to next body (R_ci, B_ci)
             conn_pi.updateKinematics(q) # TODO
+            #print('R_ci',p.Name)
+            #print(conn_pi.R_ci)
 
             # Full connection p and j
-            R_pi   = R_pc*conn_pi.R_ci  
+            R_pi   = np.dot(R_pc, conn_pi.R_ci )
             if conn_pi.B_ci.shape[1]>0:
-                raise NotImplementedError()
-                #Bx_pi  = [Bx_pc R_pc*conn.B_ci(1:3,:)];
-                #Bt_pi  = [Bt_pc R_pc*conn.B_ci(4:6,:)];
+                Bx_pi  = np.column_stack((Bx_pc, np.dot(R_pc,conn_pi.B_ci[:3,:])))
+                Bt_pi  = np.column_stack((Bt_pc, np.dot(R_pc,conn_pi.B_ci[3:,:])))
             else:
                 Bx_pi  = Bx_pc
                 Bt_pi  = Bt_pc
               
             # Rotation of body i is rotation due to p and j
-            R_0i = R_0p * R_pi
+            R_0i = np.dot( R_0p , R_pi )
+            #print('R_pi',p.Name)
+            #print(R_pi)
+            #print('R_0p',p.Name)
+            #print(R_0p)
+            #print('R_0i',p.Name)
+            #print(R_0i)
 
             # Position of connection point in P and 0 system
             r_pi_inP= conn_pi.s_C_inB
-            r_pi    = R_0p * r_pi_inP
+            r_pi    = np.dot (R_0p , r_pi_inP )
+            #print('r_pi')
+            #print(r_pi_inP)
+            #print('Bx_pi')
+            #print(Bx_pi)
+            #print('Bt_pi')
+            #print(Bt_pi)
             B_i      = fBMatRecursion(B_p, Bx_pi, Bt_pi, R_0p, r_pi)
             B_i_inI  = fB_inB(R_0i, B_i)
             BB_i_inI = fB_aug(B_i_inI, body_i.nf)
@@ -139,6 +179,41 @@ class Body(object):
             body_i.B      = B_i    
             body_i.B_inB  = B_i_inI
             body_i.BB_inB = BB_i_inI
+
+            # --- Updating Position and orientation of child body 
+            r_0i = r_0p + r_pi  # % in 0 system
+            body_i.R_pb = R_pi 
+            body_i.updatePosOrientation(r_0i,R_0i)
+
+            # TODO flexible dofs and velocities/acceleration
+            body_i.gzf  = q[body_i.I_DOF,0] # TODO use updateKinematics
+
+    def getFullM(o,M):
+        if not isinstance(o,GroundBody):
+            MqB      = fBMB(o.BB_inB,o.MM)
+            n        = MqB.shape[0]
+            M[:n,:n] = M[:n,:n]+MqB     
+        for c in o.Children:
+            M=c.getFullM(M)
+        return M
+        
+    def getFullK(o,K):
+        if not isinstance(o,GroundBody):
+            KqB      = fBMB(o.BB_inB,o.KK)
+            n        = KqB.shape[0]
+            K[:n,:n] = K[:n,:n]+KqB     
+        for c in o.Children:
+            K=c.getFullK(K)
+        return K
+        
+    def getFullD(o,D):
+        if not isinstance(o,GroundBody):
+            DqB      = fBMB(o.BB_inB,o.DD)
+            n        = DqB.shape[0]
+            D[:n,:n] = D[:n,:n]+DqB     
+        for c in o.Children:
+            D=c.getFullD(D)
+        return D
 
     @property
     def nf(B):
@@ -171,24 +246,24 @@ class Body(object):
 # --- Ground Body 
 # --------------------------------------------------------------------------------{
 class GroundBody(Body):
-    def __init__(self):
-        super(GroundBody,self).__init__('Grd')
-        self.nf   = 0
+    def __init__(B):
+        super(GroundBody,B).__init__('Grd')
 
 # --------------------------------------------------------------------------------}
 # --- Rigid Body 
 # --------------------------------------------------------------------------------{
 class RigidBody(Body):
-    def __init__(B,Name,Mass,J_G,rho_G):
+    def __init__(B, Name, Mass, J_G, rho_G):
         """
         Creates a rigid body 
         """
-        super(Body,B).__init__()
+        super(RigidBody,B).__init__()
         B.s_G_inB = rho_G
         B.J_G_inB = J_G
         B.J_O_inB = fTranslateInertiaMatrixFromCOG(B.J_G_inB, Mass, B.s_G_inB)
-        B.KK=np.zeros((6,6))
         B.MM = fGMRigidBody(Mass,B.J_O_inB,B.s_G_inB)
+        B.DD = np.zeros((6,6))
+        B.KK = np.zeros((6,6))
 
 
 def fGMRigidBody(Mass,J,rho):
@@ -238,6 +313,10 @@ class BeamBody(Body):
         B.computeStiffnessMatrix()
         B.DD = np.zeros((6+B.nf,6+B.nf))
 
+        B.gzf   = np.zeros((B.nf,1))
+        B.gzpf  = np.zeros((B.nf,1))
+        B.gzppf = np.zeros((B.nf,1))
+
         # TODO
         B.V0         = np.zeros((3,B.nSpan))
         B.K0         = np.zeros((3,B.nSpan))
@@ -253,15 +332,16 @@ class BeamBody(Body):
 
     @property
     def alpha_couplings(self):
-        return  np.dot(self.Bhat_t_bc , self.gz)
+        return  np.dot(self.Bhat_t_bc , self.gzf).ravel()
 
     @property
     def R_bc(self):
         alpha = self.alpha_couplings
+
         if self.main_axis=='x':
-            return R_y(alpha[1])*R_z(alpha[2])
+            return np.dot(R_y(alpha[1]),R_z(alpha[2]))
         elif self.main_axis=='z':
-            return R_x(alpha[0])*R_y(alpha[1])
+            return np.dot(R_x(alpha[0]),R_y(alpha[1]))
         else:
             raise NotImplementedError()
 
@@ -269,7 +349,7 @@ class BeamBody(Body):
     def Bhat_x_bc(self,iNode=-1):
         Bhat_x_bc = Matrix(np.zeros((3,self.nf)))
         for j in np.arange(self.nf):
-            Bhat_x_bc[0,j]=self.PhiU[j][:,iNode] #  along x
+            Bhat_x_bc[:,j]=self.PhiU[j][:,iNode] #  along x
         return Bhat_x_bc
 
     @property
@@ -292,14 +372,14 @@ class BeamBody(Body):
     def computeStiffnessMatrix(B):
         B.KK0 = GKBeam(B.s_span, B.EI, B.PhiK, bOrth=B.bOrth)
         if B.bStiffening:
-            B.KKg = GKBeamStiffnening(B.s_span, B.PhiV, B.gravity, B.m, B.Mtop)
+            B.KKg = GKBeamStiffnening(B.s_span, B.PhiV, B.gravity, B.m, B.Mtop, main_axis=B.main_axis)
         else:
             B.KKg=B.KK0*0
 
         B.KK=B.KK0+B.KKg
 
     def computeMassMatrix(B):
-        B.MM = GMBeam(B.s_G, B.s_span, B.m, B.PhiU, jxxG=B.jxxG, bUseIW=True, main_axis='x', bAxialCorr=B.bAxialCorr, bOrth=B.bOrth)
+        B.MM = GMBeam(B.s_G, B.s_span, B.m, B.PhiU, jxxG=B.jxxG, bUseIW=True, main_axis=B.main_axis, bAxialCorr=B.bAxialCorr, bOrth=B.bOrth)
 
     def updateKinematics(o,x_0,R_0b,gz,v_0,a_v_0):
         super(BeamBody,o).updateKinematics(x_0,R_0b,gz,v_0,a_v_0)
@@ -327,8 +407,13 @@ class BeamBody(Body):
             # Position of deflected COG
             # TODO TODO TODO mean_axis not x
             o.rho_G      = np.zeros((3,o.nSpan))
-            o.rho_G[1,:] = o.rho_G0_inS[1,:]*np.cos(o.V_tot[0,:])-o.rho_G0_inS[2,:]*np.sin(o.V_tot[0,:]);
-            o.rho_G[2,:] = o.rho_G0_inS[1,:]*np.sin(o.V_tot[0,:])+o.rho_G0_inS[2,:]*np.cos(o.V_tot[0,:]);
+            if o.main_axis=='x':
+                o.rho_G[1,:] = o.rho_G0_inS[1,:]*np.cos(o.V_tot[0,:])-o.rho_G0_inS[2,:]*np.sin(o.V_tot[0,:]);
+                o.rho_G[2,:] = o.rho_G0_inS[1,:]*np.sin(o.V_tot[0,:])+o.rho_G0_inS[2,:]*np.cos(o.V_tot[0,:]);
+            else:
+                raise NotImplementedError()
+                o.rho_G[1,:] = o.rho_G0_inS[1,:]*np.cos(o.V_tot[0,:])-o.rho_G0_inS[2,:]*np.sin(o.V_tot[0,:]);
+                o.rho_G[2,:] = o.rho_G0_inS[1,:]*np.sin(o.V_tot[0,:])+o.rho_G0_inS[2,:]*np.cos(o.V_tot[0,:]);
             o.s_G = o.s_P+o.rho_G;
             # Alternative:
             #rho_G2     = zeros(3,o.nSpan);
@@ -488,7 +573,7 @@ class FASTBeamBody(BeamBody):
             PhiU[j][iAxis,:], PhiV[j][iAxis,:], PhiK[j][iAxis,:] = polymode(s_span,coeff[:,j],exp)
 
 
-        super(FASTBeamBody,B).__init__(s_span, s_P0, m, PhiU, PhiV, PhiK, EI, jxxG=jxxG, bAxialCorr=bAxialCorr, bOrth=body_type=='blade', gravity=gravity,Mtop=Mtop, bStiffening=bStiffening)
+        super(FASTBeamBody,B).__init__(s_span, s_P0, m, PhiU, PhiV, PhiK, EI, jxxG=jxxG, bAxialCorr=bAxialCorr, bOrth=body_type=='blade', gravity=gravity,Mtop=Mtop, bStiffening=bStiffening, main_axis=main_axis)
 
         # Damping
         B.DD=np.zeros((6+nShapes,6+nShapes))
@@ -537,9 +622,9 @@ def fB_aug(B_I_inI, nf_I, nf_Curr=None, nf_Prev=None):
     """
     if len(B_I_inI)==0:
         if nf_I>0:
-            BB_I_inI = Matrix(np.vstack( (np.zeros((6,nf_I)).astype(int), np.eye(nf_I).astype(int))) )
+            BB_I_inI = Matrix(np.vstack( (np.zeros((6,nf_I)), np.eye(nf_I))) )
         else:
-            BB_I_inI= Matrix(np.zeros((6,0)).astype(int))
+            BB_I_inI= Matrix(np.zeros((6,0)))
     else:
         if nf_Curr is not None:
             # Case of several flexible bodies connected to one point (i.e. blades)
@@ -572,13 +657,13 @@ def fBMatRecursion(Bp, Bhat_x, Bhat_t, R0p, r_pi):
     else:
         raise Exception('Bi needs to be empty or a 2d array')
 
-    r_pi=colvec(r_pi)
+    r_pi=r_pi.reshape(3,1)
 
     # TODO use Translate here
     Bi = Matrix(np.zeros((6,ni+n_p)))
     for j in range(n_p):
-        Bi[:3,j] = Bp[:3,j]+cross(Bp[3:,j],r_pi.ravel()) # Recursive formula for Bt mentioned after Eq.(15)
-        Bi[3:,j] = Bp[3:,j] # Recursive formula for Bx mentioned after Eq.(12)
+            Bi[:3,j] = Bp[:3,j]+cross(Bp[3:,j],r_pi.ravel()) # Recursive formula for Bt mentioned after Eq.(15)
+            Bi[3:,j] = Bp[3:,j] # Recursive formula for Bx mentioned after Eq.(12)
     if ni>0:
         Bi[:3,n_p:] = np.dot(R0p,Bhat_x[:,:]) # Recursive formula for Bx mentioned after Eq.(15)
         Bi[3:,n_p:] = np.dot(R0p,Bhat_t[:,:]) # Recursive formula for Bt mentioned after Eq.(12)

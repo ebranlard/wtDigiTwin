@@ -55,18 +55,26 @@ class Connection():
             j.R_ci=j.R_ci_0
         elif j.Type=='SphericalJoint':
             R=eye(3)
-            raise NotImplementedError()
-#           for ir=1:length(j.JointRotations)
-#               switch j.JointRotations{ir}
-#                   case 'x'; I=[1;0;0];
-#                   case 'y'; I=[0;1;0];
-#                   case 'z'; I=[0;0;1];
-#                   otherwise; error('Here');
-#               % Setting Bhat column by column
-#               j.B_ci(4:6,ir) = R*I; % NOTE: needs to be done before R updates
-#               % Updating rotation matrix
-#               R=R*fRot(j.JointRotations{ir}, myq(ir));
-            j.R_ci=R*j.R_ci_0;
+            myq    = q   [j.I_DOF,0];
+            #myqdot = qdot[j.I_DOF];
+
+            for ir,rot in enumerate(j.JointRotations):
+                if rot=='x':
+                    I=np.array([1,0,0])
+                    Rj=R_x( myq[ir] )
+                elif rot=='y':
+                    I=np.array([0,1,0])
+                    Rj=R_y( myq[ir] )
+                elif rot=='z':
+                    I=np.array([0,0,1])
+                    Rj=R_z( myq[ir] )
+                else:
+                    raise Exception()
+                # Setting Bhat column by column
+                j.B_ci[3:,ir] = np.dot(R,I) # NOTE: needs to be done before R updates
+                # Updating rotation matrix
+                R      = np.dot(R , Rj )
+                j.R_ci = Matrix(np.dot(R, j.R_ci_0 ))
 
 
 # --------------------------------------------------------------------------------}
@@ -85,13 +93,29 @@ class Body(object):
         o.r_O = x_0      # position of body origin in global coordinates
         o.R_0b=R_0b      # transformation matrix from body to global
 
-    def connectTo(self, Child, Point=None, Type=None, RelOrientation=None):
+    def connectTo(self, Child, Point=None, Type=None, RelOrientation=None, JointRotations=None):
         if Type =='Rigid':
             c=Connection(Type, RelPoint=Point, RelOrientation = RelOrientation)
         else: # TODO first node, last node
-            c=Connection(Type, RelPoint=RelPoint, RelOrientation=RelOrientation)
+            c=Connection(Type, RelPoint=Point, RelOrientation=RelOrientation, JointRotations=JointRotations)
         self.Children.append(Child)
         self.Connections.append(c)
+
+    def setupDOFIndex(o,n):
+        nForMe=o.nf
+        # Setting my dof index
+        o.I_DOF=n+ np.arange(nForMe) 
+        # Update
+        n=n+nForMe
+        for child,conn in zip(o.Children,o.Connections):
+            # Connection first
+            nForConn=conn.nj;
+            conn.I_DOF=n+np.arange(nForConn)
+            # Update
+            n=n+nForConn;
+            # Then Children
+            n=child.setupDOFIndex(n)
+        return n
 
     def __repr__(B):
         pass
@@ -126,9 +150,8 @@ class Body(object):
             # Full connection p and j
             R_pi   = R_pc*conn_pi.R_ci  
             if conn_pi.B_ci.shape[1]>0:
-                raise NotImplementedError()
-                #Bx_pi  = [Bx_pc R_pc*conn.B_ci(1:3,:)];
-                #Bt_pi  = [Bt_pc R_pc*conn.B_ci(4:6,:)];
+                Bx_pi  = Matrix(np.column_stack((Bx_pc, np.dot(R_pc,conn_pi.B_ci[:3,:]))))
+                Bt_pi  = Matrix(np.column_stack((Bt_pc, np.dot(R_pc,conn_pi.B_ci[3:,:]))))
             else:
                 Bx_pi  = Bx_pc
                 Bt_pi  = Bt_pc
@@ -147,6 +170,40 @@ class Body(object):
             body_i.B_inB  = B_i_inI
             body_i.BB_inB = BB_i_inI
 
+            # --- Updating Position and orientation of child body 
+            r_0i = r_0p + r_pi  # % in 0 system
+            body_i.R_pb = R_pi 
+            body_i.updatePosOrientation(r_0i,R_0i)
+
+            # TODO flexible dofs and velocities/acceleration
+            body_i.gzf  = q[body_i.I_DOF,0] # TODO use updateKinematics
+
+    def getFullM(o,M):
+        if not isinstance(o,GroundBody):
+            MqB      = fBMB(o.BB_inB,o.MM)
+            n        = MqB.shape[0]
+            M[:n,:n] = M[:n,:n]+MqB     
+        for c in o.Children:
+            M=c.getFullM(M)
+        return M
+        
+    def getFullK(o,K):
+        if not isinstance(o,GroundBody):
+            KqB      = fBMB(o.BB_inB,o.KK)
+            n        = KqB.shape[0]
+            K[:n,:n] = K[:n,:n]+KqB     
+        for c in o.Children:
+            K=c.getFullK(K)
+        return K
+        
+    def getFullD(o,D):
+        if not isinstance(o,GroundBody):
+            DqB      = fBMB(o.BB_inB,o.DD)
+            n        = DqB.shape[0]
+            D[:n,:n] = D[:n,:n]+DqB     
+        for c in o.Children:
+            D=c.getFullD(D)
+        return D
 
 
 # --------------------------------------------------------------------------------}
@@ -161,7 +218,10 @@ class GroundBody(Body):
 # --- Rigid Body 
 # --------------------------------------------------------------------------------{
 class RigidBody(Body):
-    def __init__(B, Name, Mass, rho_G, J_G):
+    def __init__(B, Name, Mass, J_G, rho_G):
+        """
+        Creates a rigid body 
+        """
         super(RigidBody,B).__init__(Name)
         B.nf  = 0
         B.s_G_inB = rho_G
@@ -179,7 +239,7 @@ class BeamBody(Body):
         B.main_axis = main_axis
     @property
     def alpha_couplings(self):
-        return  np.dot(self.Bhat_t_bc , self.gz)
+        return  np.dot(self.Bhat_t_bc , self.gzf)
 
     @property
     def R_bc(self):

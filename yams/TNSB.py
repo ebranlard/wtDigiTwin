@@ -22,6 +22,87 @@ except:
     from yams import *
 
 # --------------------------------------------------------------------------------}
+# --- Creating a TNSB model automatically 
+# --------------------------------------------------------------------------------{
+def auto_assembly(Twr,Nac,Sft,Blds,q,r_ET_inE,r_TN_inT,r_NS_inN,r_SR_inS,main_axis='x',theta_tilt=0,theta_yaw=0,DEBUG=False):
+
+    if main_axis=='x':
+        #R_NS     = np.dot(R_y(-tilt_up),R_z(q_psi + np.pi)) # << tilt 
+        R_cn0 = R_x (theta_yaw) * R_y (-theta_tilt)
+        R_cs0 = R_z (np.pi)
+        Shaft_axis='z'
+    elif main_axis=='z':
+        R_cn0 = R_z (theta_yaw) * R_y(theta_tilt)
+        R_cs0 = R_x (np.pi)
+        Shaft_axis='x'
+    nB=len(Blds)
+
+
+    # Creating reference frame
+    Grd = GroundBody()
+
+    # Connections between bodies
+    Grd.connectTo(Twr, Point=r_ET_inE, Type='Rigid')
+    Twr.connectTo(Nac, Point=r_TN_inT, Type='Rigid', RelOrientation = R_cn0 )
+    Nac.connectTo (Sft   , Point=r_NS_inN, Type='SphericalJoint',JointRotations=[Shaft_axis],RelOrientation = R_cs0)
+    for i,B in enumerate(Blds):
+        psi_B= -i*2*np.pi/nB # 0 -2pi/2 2pi/3  or 0 pi
+        if main_axis=='x':
+            R_SB = R_z(0*np.pi + psi_B)
+        elif main_axis=='z':
+            R_SB = R_x(0*np.pi + psi_B)
+        Sft.connectTo(B, Point=r_SR_inS, Type='Rigid', RelOrientation = R_SB)
+
+    # Setting DOF index for all bodies and connections 
+    nq=Grd.setupDOFIndex(0);
+    if nq!=len(q):
+       print('>>> ',nq,len(q))
+       raise Exception('Wrong number of dof')
+
+    Grd.updateChildrenKinematicsNonRecursive(q)
+    Twr.updateChildrenKinematicsNonRecursive(q)
+    Nac.updateChildrenKinematicsNonRecursive(q)
+    Sft.updateChildrenKinematicsNonRecursive(q)
+
+
+    # --- Full system
+    nq = len(q)
+    MM = np.zeros((nq,nq))
+    MM = Grd.getFullM(MM)
+    KK = np.zeros((nq,nq))
+    KK = Grd.getFullK(KK)
+    DD = np.zeros((nq,nq))
+    DD = Grd.getFullD(DD)
+
+    MM[np.abs(MM)< 1e-09] = 0
+    # --- returning everthin in a structure class
+    class Structure():
+        pass
+    Struct      = Structure()
+    Struct.Twr  = Twr
+    Struct.Nac  = Nac
+    Struct.Sft  = Sft
+    Struct.Blds = Blds
+    Struct.MM   = MM
+    Struct.KK   = KK
+    Struct.DD   = DD
+
+
+    Struct.alpha=Twr.alpha_couplings
+
+    Struct.r_ET_inE=r_ET_inE
+    Struct.r_TN_inT=r_TN_inT
+    Struct.r_NS_inN=r_NS_inN
+    Struct.r_SR_inS=r_SR_inS
+
+    Struct.iPsi = Twr.nf # Index of DOF corresponding to azimuth
+
+    return Struct
+
+
+
+
+# --------------------------------------------------------------------------------}
 # --- Manual assembly of a TNSB model 
 # --------------------------------------------------------------------------------{
 def manual_assembly(Twr,Nac,Sft,Blds,q,r_ET_inE,r_TN_inT,r_NS_inN,r_SR_inS,main_axis='x',tilt_up=0,DEBUG=False):
@@ -39,7 +120,6 @@ def manual_assembly(Twr,Nac,Sft,Blds,q,r_ET_inE,r_TN_inT,r_NS_inN,r_SR_inS,main_
     CzT=  np.zeros(Twr.nf)
     for j,v in enumerate(Twr.PhiV):
         if main_axis=='x':
-            iMainAxis=2 # TODO
             CyT[j]=-v[2,-1] # A deflection along z gives a negative angle around y
             CzT[j]= v[1,-1] # A deflection along y gives a positive angle around z # TODO TODO CHECK ME
             #print('Alpha y - mode {}:'.format(j+1),CyT[j])
@@ -66,6 +146,9 @@ def manual_assembly(Twr,Nac,Sft,Blds,q,r_ET_inE,r_TN_inT,r_NS_inN,r_SR_inS,main_
     KK_T     = fBMB(BB_T_inT,Twr.KK)
     DD_T     = fBMB(BB_T_inT,Twr.DD)
 
+    Twr.B      = B_T    
+    Twr.B_inB  = B_T_inT
+    Twr.BB_inB = BB_T_inT
 
     # ---------------------------------------------
     # Link T-N
@@ -77,13 +160,17 @@ def manual_assembly(Twr,Nac,Sft,Blds,q,r_ET_inE,r_TN_inT,r_NS_inN,r_SR_inS,main_
     elif Twr.nf == 1:
         if main_axis=='x':
             Bx_TN = np.array([[0],[0],[1]])
-            Bt_TN = np.array([[0],[CyT[0]],[0]])
-            alpha_y = np.dot(CyT.ravel(), q[0,0].ravel())
+        elif main_axis=='z':
+            Bx_TN = np.array([[1],[0],[0]])
+        Bt_TN = np.array([[0],[CyT[0]],[0]])
+        alpha_y = np.dot(CyT.ravel(), q[0,0].ravel())
     elif Twr.nf == 2:
         if main_axis=='x':
             Bx_TN = np.array([[0,0],[0,0],[1,1]])
-            Bt_TN = np.array([[0,0],[CyT[0],CyT[1]],[0,0]])
-            alpha_y = np.dot(CyT.ravel() , q[:2,0].ravel())
+        elif main_axis=='z':
+            Bx_TN = np.array([[1,1],[0,0],[0,0]])
+        Bt_TN = np.array([[0,0],[CyT[0],CyT[1]],[0,0]])
+        alpha_y = np.dot(CyT.ravel() , q[:2,0].ravel())
     else:
         # TODO use CzT
         raise NotImplementedError()
@@ -96,19 +183,32 @@ def manual_assembly(Twr,Nac,Sft,Blds,q,r_ET_inE,r_TN_inT,r_NS_inN,r_SR_inS,main_
     MM_N     = fBMB(BB_N_inN,Nac.MM)
     KK_N     = fBMB(BB_N_inN,Nac.KK)
 
+    Nac.B      = B_N    
+    Nac.B_inB  = B_N_inN
+    Nac.BB_inB = BB_N_inN
     # ---------------------------------------------
     # Link N-S
     q_psi = q[iPsi,0]
-    R_NS     = np.dot(R_y(-tilt_up),R_z(q_psi + np.pi)) # << tilt 
+    if main_axis=='x':
+        R_NS     = np.dot(R_y(-tilt_up),R_z(q_psi + np.pi)) # << tilt 
+    elif main_axis=='z':
+        R_NS     = np.dot(R_y( tilt_up),R_x(q_psi + np.pi)) # << tilt 
     R_ES     = np.dot(R_EN, R_NS)
     r_NS     = np.dot(R_EN, r_NS_inN)
     Bx_NS    = np.array([[0],[0],[0]])
-    Bt_NS    = np.array([[0],[0],[1]])
+    if main_axis=='x':
+        Bt_NS    = np.array([[0],[0],[1]])
+    elif main_axis=='z':
+        Bt_NS    = np.array([[1],[0],[0]])
     B_S      = fBMatRecursion(B_N,Bx_NS,Bt_NS,R_EN,r_NS)
     B_S_inS  = fB_inB(R_ES, B_S)
     BB_S_inS = fB_aug(B_S_inS, Sft.nf)
     MM_S     = fBMB(BB_S_inS,Sft.MM)
     KK_S     = fBMB(BB_S_inS,Sft.KK)
+
+    Sft.B      = B_S    
+    Sft.B_inB  = B_S_inS
+    Sft.BB_inB = BB_S_inS
 
     # ---------------------------------------------
     # Link S-B1
@@ -139,6 +239,9 @@ def manual_assembly(Twr,Nac,Sft,Blds,q,r_ET_inE,r_TN_inT,r_NS_inN,r_SR_inS,main_
         KK_B +=     fBMB(BB_B_inB,B.KK)
         DD_B +=     fBMB(BB_B_inB,B.DD)
 
+        B.B      = B_R
+        B.B_inB  = B_B_inB
+        B.BB_inB = BB_B_inB
      
 
     # --- Final assembly
@@ -211,6 +314,14 @@ def manual_assembly(Twr,Nac,Sft,Blds,q,r_ET_inE,r_TN_inT,r_NS_inN,r_SR_inS,main_
     Struct.MM   = MM
     Struct.KK   = KK
     Struct.DD   = DD
+
+    Struct.r_ET_inE=r_ET_inE
+    Struct.r_TN_inT=r_TN_inT
+    Struct.r_NS_inN=r_NS_inN
+    Struct.r_SR_inS=r_SR_inS
+
+    Struct.CyT=CyT
+    Struct.alpha=[alpha_y]
 
     Struct.iPsi = iPsi # Index 
 

@@ -24,16 +24,24 @@ except:
 # --------------------------------------------------------------------------------}
 # --- Creating a TNSB model automatically 
 # --------------------------------------------------------------------------------{
-def auto_assembly(Twr,Nac,Sft,Blds,q,r_ET_inE,r_TN_inT,r_NS_inN,r_SR_inS,main_axis='x',theta_tilt=0,theta_yaw=0,DEBUG=False):
+def auto_assembly(Twr,Nac,Sft,Blds,q,r_ET_inE,r_TN_inT,r_NS_inN,r_SR_inS,main_axis='x',theta_tilt_y=0,theta_yaw=0,theta_cone_y=0,DEBUG=False,bTiltBeforeNac=False):
 
     if main_axis=='x':
         #R_NS     = np.dot(R_y(-tilt_up),R_z(q_psi + np.pi)) # << tilt 
-        R_cn0 = R_x (theta_yaw) * R_y (-theta_tilt)
-        R_cs0 = R_z (np.pi)
+        if bTiltBeforeNac:
+            R_cn0 = np.dot(R_x (theta_yaw) , R_y (theta_tilt_y))
+            R_cs0 = R_z (np.pi)
+        else:
+            R_cn0 = R_x (theta_yaw) 
+            R_cs0 = np.dot( R_y(theta_tilt_y) , R_z (np.pi)) # Note: OrientBefore
         Shaft_axis='z'
     elif main_axis=='z':
-        R_cn0 = R_z (theta_yaw) * R_y(theta_tilt)
-        R_cs0 = R_x (np.pi)
+        if bTiltBeforeNac:
+            R_cn0 = np.dot(R_z (theta_yaw) , R_y(theta_tilt_y))
+            R_cs0 = R_x (np.pi)
+        else:
+            R_cn0 = R_z (theta_yaw) 
+            R_cs0 = np.dot(R_y(theta_tilt_y) , R_x (np.pi) )# Note: OrientBefore
         Shaft_axis='x'
     nB=len(Blds)
 
@@ -43,14 +51,15 @@ def auto_assembly(Twr,Nac,Sft,Blds,q,r_ET_inE,r_TN_inT,r_NS_inN,r_SR_inS,main_ax
 
     # Connections between bodies
     Grd.connectTo(Twr, Point=r_ET_inE, Type='Rigid')
-    Twr.connectTo(Nac, Point=r_TN_inT, Type='Rigid', RelOrientation = R_cn0 )
-    Nac.connectTo (Sft   , Point=r_NS_inN, Type='SphericalJoint',JointRotations=[Shaft_axis],RelOrientation = R_cs0)
+    Twr.connectTo(Nac, Point=r_TN_inT, Type='Rigid', RelOrientation = R_cn0 , OrientAfter=True)
+    Nac.connectTo (Sft   , Point=r_NS_inN, Type='SphericalJoint',JointRotations=[Shaft_axis],RelOrientation = R_cs0, OrientAfter=False)
     for i,B in enumerate(Blds):
         psi_B= -i*2*np.pi/nB # 0 -2pi/2 2pi/3  or 0 pi
         if main_axis=='x':
             R_SB = R_z(0*np.pi + psi_B)
         elif main_axis=='z':
             R_SB = R_x(0*np.pi + psi_B)
+        R_SB = np.dot(R_SB, R_y(theta_cone_y))
         Sft.connectTo(B, Point=r_SR_inS, Type='Rigid', RelOrientation = R_SB)
 
     # Setting DOF index for all bodies and connections 
@@ -79,6 +88,7 @@ def auto_assembly(Twr,Nac,Sft,Blds,q,r_ET_inE,r_TN_inT,r_NS_inN,r_SR_inS,main_ax
     class Structure():
         pass
     Struct      = Structure()
+    Struct.Grd  = Grd
     Struct.Twr  = Twr
     Struct.Nac  = Nac
     Struct.Sft  = Sft
@@ -105,15 +115,11 @@ def auto_assembly(Twr,Nac,Sft,Blds,q,r_ET_inE,r_TN_inT,r_NS_inN,r_SR_inS,main_ax
 # --------------------------------------------------------------------------------}
 # --- Manual assembly of a TNSB model 
 # --------------------------------------------------------------------------------{
-def manual_assembly(Twr,Nac,Sft,Blds,q,r_ET_inE,r_TN_inT,r_NS_inN,r_SR_inS,main_axis='x',tilt_up=0,DEBUG=False):
+def manual_assembly(Twr,Nac,Sft,Blds,q,r_ET_inE,r_TN_inT,r_NS_inN,r_SR_inS,main_axis='x',theta_tilt_y=0,theta_cone_y=0,DEBUG=False, bTiltBeforeNac=False):
 
     # Main Parameters
     nDOF = len(q)
     iPsi = Twr.nf # Index of DOF corresponding to azimuth
-
-    if main_axis=='z':
-        raise NotImplementedError()
-
 #     CyT=- np.array([ Twr.PhiV[0][2,-1],  1.5065E-01, 0, 0]) # End value of shapes functions in y direction
     CxT=  np.zeros(Twr.nf)
     CyT=  np.zeros(Twr.nf)
@@ -146,6 +152,7 @@ def manual_assembly(Twr,Nac,Sft,Blds,q,r_ET_inE,r_TN_inT,r_NS_inN,r_SR_inS,main_
     KK_T     = fBMB(BB_T_inT,Twr.KK)
     DD_T     = fBMB(BB_T_inT,Twr.DD)
 
+    Twr.R_0b   = R_ET
     Twr.B      = B_T    
     Twr.B_inB  = B_T_inT
     Twr.BB_inB = BB_T_inT
@@ -176,6 +183,8 @@ def manual_assembly(Twr,Nac,Sft,Blds,q,r_ET_inE,r_TN_inT,r_NS_inN,r_SR_inS,main_
         raise NotImplementedError()
     #print('alpha_y',alpha_y)
     R_TN     = R_y(alpha_y)
+    if bTiltBeforeNac:
+        R_TN     = np.dot(R_TN, R_y(theta_tilt_y))
     R_EN     = np.dot(R_ET, R_TN)
     B_N      = fBMatRecursion(B_T,Bx_TN,Bt_TN,R_ET,r_TN_inT)
     B_N_inN  = fB_inB(R_EN, B_N)
@@ -183,6 +192,7 @@ def manual_assembly(Twr,Nac,Sft,Blds,q,r_ET_inE,r_TN_inT,r_NS_inN,r_SR_inS,main_
     MM_N     = fBMB(BB_N_inN,Nac.MM)
     KK_N     = fBMB(BB_N_inN,Nac.KK)
 
+    Nac.R_0b   = R_EN
     Nac.B      = B_N    
     Nac.B_inB  = B_N_inN
     Nac.BB_inB = BB_N_inN
@@ -190,9 +200,11 @@ def manual_assembly(Twr,Nac,Sft,Blds,q,r_ET_inE,r_TN_inT,r_NS_inN,r_SR_inS,main_
     # Link N-S
     q_psi = q[iPsi,0]
     if main_axis=='x':
-        R_NS     = np.dot(R_y(-tilt_up),R_z(q_psi + np.pi)) # << tilt 
+        R_NS     = R_z(q_psi + np.pi) 
     elif main_axis=='z':
-        R_NS     = np.dot(R_y( tilt_up),R_x(q_psi + np.pi)) # << tilt 
+        R_NS     = R_x(q_psi + np.pi) 
+    if not bTiltBeforeNac:
+        R_NS     = np.dot(R_y(theta_tilt_y),R_NS)
     R_ES     = np.dot(R_EN, R_NS)
     r_NS     = np.dot(R_EN, r_NS_inN)
     Bx_NS    = np.array([[0],[0],[0]])
@@ -206,6 +218,7 @@ def manual_assembly(Twr,Nac,Sft,Blds,q,r_ET_inE,r_TN_inT,r_NS_inN,r_SR_inS,main_
     MM_S     = fBMB(BB_S_inS,Sft.MM)
     KK_S     = fBMB(BB_S_inS,Sft.KK)
 
+    Sft.R_0b   = R_ES
     Sft.B      = B_S    
     Sft.B_inB  = B_S_inS
     Sft.BB_inB = BB_S_inS
@@ -229,6 +242,7 @@ def manual_assembly(Twr,Nac,Sft,Blds,q,r_ET_inE,r_TN_inT,r_NS_inN,r_SR_inS,main_
             R_SB = R_z(0*np.pi + psi_B)
         elif main_axis=='z':
             R_SB = R_x(0*np.pi + psi_B)
+        R_SB = np.dot(R_SB, R_y(theta_cone_y))
         R_EB       = np.dot(R_ES, R_SB)
         B_B_inB    = fB_inB(R_EB, B_R)
         BB_B_inB   = fB_aug(B_B_inB, nf_tot, B.nf, nf_done)

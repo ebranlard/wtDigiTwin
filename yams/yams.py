@@ -22,7 +22,7 @@ def colvec(v):
 # --- Connections 
 # --------------------------------------------------------------------------------{
 class Connection():
-    def __init__(self,Type,RelPoint=None,RelOrientation=None,JointRotations=None):
+    def __init__(self,Type,RelPoint=None,RelOrientation=None,JointRotations=None, OrientAfter=True):
         if RelOrientation is None:
             RelOrientation=eye(3)
         if RelPoint is None:
@@ -34,6 +34,7 @@ class Connection():
         self.s_C_inB   = self.s_C_0_inB
         self.R_ci_0    = RelOrientation
         self.R_ci      = self.R_ci_0     
+        self.OrientAfter= OrientAfter
 
         if self.Type=='Rigid':
             self.nj=0
@@ -68,7 +69,10 @@ class Connection():
                 j.B_ci[3:,ir] = np.dot(R,I) # NOTE: needs to be done before R updates
                 # Updating rotation matrix
                 R      = np.dot(R , Rj )
-                j.R_ci = np.dot(R, j.R_ci_0 )
+                if j.OrientAfter:
+                    j.R_ci = np.dot(R, j.R_ci_0 )
+                else:
+                    j.R_ci = np.dot(j.R_ci_0, R )
 
 
 # --------------------------------------------------------------------------------}
@@ -87,11 +91,11 @@ class Body(object):
         o.r_O = x_0      # position of body origin in global coordinates
         o.R_0b=R_0b      # transformation matrix from body to global
 
-    def connectTo(self, Child, Point=None, Type=None, RelOrientation=None, JointRotations=None):
+    def connectTo(self, Child, Point=None, Type=None, RelOrientation=None, JointRotations=None, OrientAfter=True):
         if Type =='Rigid':
             c=Connection(Type, RelPoint=Point, RelOrientation = RelOrientation)
         else: # TODO first node, last node
-            c=Connection(Type, RelPoint=Point, RelOrientation=RelOrientation, JointRotations=JointRotations)
+            c=Connection(Type, RelPoint=Point, RelOrientation=RelOrientation, JointRotations=JointRotations, OrientAfter=OrientAfter)
         self.Children.append(Child)
         self.Connections.append(c)
 
@@ -168,6 +172,8 @@ class Body(object):
             r_pi    = np.dot (R_0p , r_pi_inP )
             #print('r_pi')
             #print(r_pi_inP)
+            #print('r_pi')
+            #print(r_pi)
             #print('Bx_pi')
             #print(Bx_pi)
             #print('Bt_pi')
@@ -181,7 +187,7 @@ class Body(object):
             body_i.BB_inB = BB_i_inI
 
             # --- Updating Position and orientation of child body 
-            r_0i = r_0p + r_pi  # % in 0 system
+            r_0i = r_0p + r_pi  # in 0 system
             body_i.R_pb = R_pi 
             body_i.updatePosOrientation(r_0i,R_0i)
 

@@ -548,8 +548,6 @@ methods
 
     function updateChildrenKinematicsNonRecursive(p,q,qdot,qddot)
         % At this stage all the kinematics of the body p are known
-
-
         % Useful variables
         R_0p =  p.R_0b;
         B_p  =  p.B;
@@ -575,8 +573,6 @@ methods
                     alpha_y= - p.V(3,iNode);
                     alpha_z=   p.V(2,iNode);
                     R_pc=fRoty(alpha_y)*fRotz(alpha_z);
-
-
                     Bx_pc=zeros(3,p.nf);
                     Bt_pc=zeros(3,p.nf);
                     for j=1:p.nf

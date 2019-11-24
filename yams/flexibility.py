@@ -90,10 +90,6 @@ def GKBeamStiffnening(s_span, dU, gravity, m, Mtop, bSelfWeight=True, bMtop=True
     Pacc_MT = -Mtop * gravity*np.ones(nSpan)
     Pacc    = np.zeros(nSpan) 
     # TopMass contribution to Pacc
-    print('Gravity',gravity)
-    print('Mtop   ',Mtop)
-    print('m   '   ,m)
-    print('dU  '   ,dU)
     if bMtop:
         Pacc=Pacc+Pacc_MT
     if bSelfWeight:
@@ -106,8 +102,7 @@ def GKBeamStiffnening(s_span, dU, gravity, m, Mtop, bSelfWeight=True, bMtop=True
             yy=np.trapz(Pacc * dU[i][1,:] * dU[j][1,:] , s_span )
             zz=np.trapz(Pacc * dU[i][2,:] * dU[j][2,:] , s_span )
             KKCorr[i,j]=yy+zz;
-    print('KKCorr')
-    print(KKCorr)
+    #print('KKCorr\n',KKCorr)
     KKg[6:,6:] = KKCorr
     return KKg
 
@@ -304,7 +299,6 @@ class Test(unittest.TestCase):
             pass
 
         np.set_printoptions(linewidth=500)
-        from .yams import fRotx
             
         # --- Reference data
         MM_ref=np.array([[ 30000.,      0.,      0.00000,      0.,         0.00000,         0.,      0.00000,      0.00000,      0.00000],

@@ -10,12 +10,11 @@ except:
     from yams import *
     from TNSB import manual_assembly
 
-def main():
+def main(DEBUG=False,main_axis='x',nShapes_twr=1,bInit=1):
 
     # Main Parameters
     nSpan_twr   = 101
     nSpan_bld   = 61
-    nShapes_twr = 1 # 0,1,2
     nShapes_bld = 1 # 0,1,2
 
     bCompat =False
@@ -24,9 +23,8 @@ def main():
     bHubMass = 1
     bNacMass = 1
     bBldMass = 1
-    bInit    = 1
     nB       = 2 # 2 or 3
-    main_axis ='x'
+    main_axis =main_axis
 
     nDOF = 1 + nShapes_twr + nShapes_bld * nB
 
@@ -45,7 +43,11 @@ def main():
     jxx_bld = 10*5
 
     r_ET_inE    = np.array([[0]    ,[0],[0]]  )
-    r_TN_inT    = np.array([[L_twr],[0],[0]]  )
+    if main_axis=='x':
+        r_TN_inT    = np.array([[L_twr],[0],[0]]  )
+    elif main_axis=='z':
+        r_TN_inT    = np.array([[0],[0],[L_twr]] )
+
     r_NGnac_inN = np.array([[0]    ,[0],[2.0]])
     r_NS_inN    = np.array([[0]    ,[0],[-10]])
     r_SGhub_inS = np.array([[0]    ,[0],[0]]  )
@@ -118,7 +120,7 @@ def main():
     # TODO
     # TODO - THIS HAS SOME INITIAL CONDITION IN IT
     Mtop=sum([B.Mass for B in Blds]) + Sft.Mass + Nac.Mass;
-    Twr=UniformBeamBody('Tower', nShapes_twr, nSpan_twr, L_twr, EI_twr , m_twr, Mtop=Mtop, bAxialCorr=False)
+    Twr=UniformBeamBody('Tower', nShapes_twr, nSpan_twr, L_twr, EI_twr , m_twr, Mtop=Mtop, bAxialCorr=False, bStiffening=False, main_axis=main_axis)
     #  Temporary
     x_0=np.array([[0],[0],[0]])
     R_0b=np.eye(3)
@@ -131,7 +133,7 @@ def main():
     # --------------------------------------------------------------------------------}
     # --- Manual assembly 
     # --------------------------------------------------------------------------------{
-    Struct = manual_assembly(Twr,Nac,Sft,Blds,q,r_ET_inE,r_TN_inT,r_NS_inN,r_SR_inS,main_axis='x',DEBUG=False)
+    Struct = manual_assembly(Twr,Nac,Sft,Blds,q,r_ET_inE,r_TN_inT,r_NS_inN,r_SR_inS,main_axis=main_axis,DEBUG=DEBUG)
     return Struct
 
 
@@ -151,7 +153,17 @@ class Test(unittest.TestCase):
         np.testing.assert_allclose(KK[2,2],2.86e5 ,rtol  = 1e-3)
         np.testing.assert_allclose(KK[2,2],2.86e5 ,rtol  = 1e-3)
 
+        Twr=Struct.Twr
+        Twr.gravity=9.81
+        Twr.bStiffening=True
+        Twr.computeStiffnessMatrix()
+        np.testing.assert_allclose(Twr.Mtop,560000.0 ,rtol  = 1e-10)
+        np.testing.assert_allclose(Twr.KKg[6,6],-98815.131096 ,rtol  = 1e-10)
+        #print(Twr.Mtop)
+        #print(Twr.KKg)
+
 
 if __name__=='__main__':
     np.set_printoptions(linewidth=500)
-    unittest.main()
+    #unittest.main()
+    Struct=main(DEBUG=True,main_axis='x',nShapes_twr=1,bInit=1)

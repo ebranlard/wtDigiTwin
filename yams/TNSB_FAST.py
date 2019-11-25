@@ -73,8 +73,6 @@ def FASTmodel2TNSB(ED_or_FST_file,nB=3,nShapes_twr=2, nShapes_bld=0,nSpan_twr=10
         r_SR_inS    = np.array([[ED['OverHang']]            ,[0],[0]]                             ) # S and R
         r_SGhub_inS = np.array([[ED['OverHang']+ED['HubCM']],[0],[0]]                             ) # 
 
-    r_NR_inN =  r_NS_inN +  np.dot(R_NS0, r_SR_inS)
-
     r_RGhub_inS = - r_SR_inS + r_SGhub_inS
 
 
@@ -113,22 +111,8 @@ def FASTmodel2TNSB(ED_or_FST_file,nB=3,nShapes_twr=2, nShapes_bld=0,nSpan_twr=10
     M_RNA= M_rot + Sft.Mass + Nac.Mass;
     # Tower Body
     Twr = FASTBeamBody('tower',ED,twr,Mtop=M_RNA,nShapes=nShapes_twr, nSpan=nSpan_twr, main_axis=main_axis,bStiffening=bStiffening)
-    # --- RNA
-    r_NGhub_inN = r_NS_inN + np.dot(R_NS0, r_SGhub_inS)
-    r_NGrot_inN = r_NR_inN # NOTE approximation neglecting cone, putting all rotor mass at R
-    r_NGrna_inN = 1./M_RNA * (M_nac*r_NGnac_inN + M_hub*r_NGhub_inN +  M_rot*r_NGrot_inN)
-
-
-    print('tilt       ', theta_tilt_y)
-    print('Gravity    ', ED['Gravity'])
-    print('Stiffnening', bStiffening)
-    print('Ttw.KKg   \n', Twr.KKg[6:,6:])
-    print('RNA -----------------------------------------')
-    print('M_RNA      ', M_RNA)
-    print('r_NGrna_inN',r_NGrna_inN.T)
-    print('     r_NGnac_inN ',r_NGnac_inN.T , 'M_nac',M_nac)
-    print('     r_NGhub_inN ',r_NGhub_inN.T , 'M_hub',M_hub)
-    print('     r_NGrot_inN ',r_NGrot_inN.T , 'M_rot',M_rot)
+    #print('Stiffnening', bStiffening)
+    #print('Ttw.KKg   \n', Twr.KKg[6:,6:])
     if DEBUG:
         print('IG_hub')
         print(IG_hub)
@@ -141,24 +125,12 @@ def FASTmodel2TNSB(ED_or_FST_file,nB=3,nShapes_twr=2, nShapes_bld=0,nSpan_twr=10
         print('r_NGnac_inN',r_NGnac_inN.T)
         print('r_SGhub_inS',r_SGhub_inS.T)
     # --------------------------------------------------------------------------------}
-    # --- Manual assembly 
+    # --- Assembly 
     # --------------------------------------------------------------------------------{
-    #print('>>>> HACK')
-    #Twr.DD*=0
-#     Nac.MM*=0
-#     Blds[0].MM*=0
-#     Blds[1].MM*=0
-#     Blds[2].MM*=0
-
-
     if assembly=='manual':
         Struct = manual_assembly(Twr,Nac,Sft,Blds,q,r_ET_inE,r_TN_inT,r_NS_inN,r_SR_inS,main_axis=main_axis,theta_tilt_y=theta_tilt_y,theta_cone_y=theta_cone_y,DEBUG=DEBUG, bTiltBeforeNac=bTiltBeforeNac)
     else:
-        print('>>>Auto assembly is beta')
         Struct = auto_assembly(Twr,Nac,Sft,Blds,q,r_ET_inE,r_TN_inT,r_NS_inN,r_SR_inS,main_axis=main_axis,theta_tilt_y=theta_tilt_y,theta_cone_y=theta_cone_y,DEBUG=DEBUG, bTiltBeforeNac=bTiltBeforeNac)
-
-
-    Struct.theta_tilt_y=theta_tilt_y # [rad]
 
     # --- Initial conditions
     omega_init = ED['RotSpeed']*2*np.pi/60 # rad/s
@@ -179,9 +151,6 @@ def FASTmodel2TNSB(ED_or_FST_file,nB=3,nShapes_twr=2, nShapes_bld=0,nSpan_twr=10
         print('Initial conditions:')
         print(q_init)
 
-    # --- Useful info
-    Struct.r_NR_inN = r_NR_inN  
-
     return Struct
 
 
@@ -200,8 +169,8 @@ if __name__=='__main__':
     nShapes_bld=0
     nDOF = 1 + nShapes_twr + nShapes_bld * 3
     q = np.zeros((nDOF,1)) # TODO, full account of q not done
-    q[[0]]=0
-    q[[1]]=0.0
+    q[[0]]=1
+    q[[1]]=0.1
     q[[2]]=0*np.pi/4.
 
     np.set_printoptions(linewidth=500)
@@ -303,8 +272,6 @@ if __name__=='__main__':
     print(StructA.MM)
     print(StructM.MM)
     print(StructM.MM-StructA.MM)
-    print('Origin R :',StructA.Blds[0].r_O.T)
-    print('Origin S :',StructA.Sft.r_O.T)
-    print('Origin N :',StructA.Nac.r_O.T)
-    print('Origin T :',StructA.Twr.r_O.T)
-    print('Origin E :',StructA.Grd.r_O.T)
+    print(StructA)
+    print(StructM)
+#     print('Origin E :',StructM.Grd.r_O.T)

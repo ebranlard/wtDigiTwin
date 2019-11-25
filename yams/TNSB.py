@@ -21,6 +21,119 @@ try:
 except:
     from yams import *
 
+
+class Structure():
+    def __init__(self,main_axis='x',theta_tilt=0,theta_yaw=0,theta_cone=0,bTiltBeforeNac=False):
+        self.main_axis      = main_axis
+        self.theta_tilt     = theta_tilt
+        self.theta_cone     = theta_cone
+        self.theta_yaw      = theta_yaw
+        self.bTiltBeforeNac = bTiltBeforeNac
+
+    def compute_RNA(s):
+        s.M_rot= sum([B.Mass for B in s.Blds])
+        s.M_RNA= s.M_rot + s.Sft.Mass + s.Nac.Mass;
+        s.r_NGnac_inN = s.Nac.s_G_inB
+        s.r_NGhub_inN = s.r_NS_inN + np.dot(s.Nac.R_0b.T, np.dot(s.Sft.R_0b, s.Sft.s_G_inB))
+        s.r_NGrot_inN = s.r_NR_inN   # NOTE approximation neglecting cone, putting all rotor mass at R
+        s.r_NGrna_inN = 1./s.M_RNA * (s.Nac.Mass*s.r_NGnac_inN + s.Sft.Mass*s.r_NGhub_inN +  s.M_rot*s.r_NGrot_inN)
+
+    def init_trigger(s):
+        s.alpha = s.Twr.alpha_couplings
+        s.iPsi  = s.Twr.nf # Index of DOF corresponding to azimuth
+
+        # Useful for load computation
+        s.r_NR_inN = s.r_NS_inN + np.dot(s.Nac.R_0b.T, np.dot(s.Sft.R_0b, s.r_SR_inS))
+        s.gravity  = s.Twr.gravity
+        s.compute_RNA()
+        s.nDOF = len(s.q)
+        s.nShapes_twr = s.Twr.nf
+        s.nShapes_bld = s.Blds[0].nf
+
+
+    def GF(s,T,x):
+        """ 
+        T is the force along the shaft
+        """
+        if (s.nShapes_twr!=1):
+            raise NotImplementedError('Number of shape function not 1')
+        if s.main_axis=='x':
+            raise NotImplementedError('Main axis along x')
+
+        # update tower kinematics
+        s.Twr.gzf=x 
+        alpha = s.Twr.alpha_couplings
+        alpha_y=alpha[0]
+
+        rhoN_x = s.r_NGrna_inN[0,0]
+        rhoN_z = s.r_NGrna_inN[2,0]
+        rNR_x  = s.r_NR_inN[0,0]
+        rNR_z  = s.r_NR_inN[2,0]
+        g      = s.gravity
+        ux1c   = 1
+        vy1c   = s.Twr.Bhat_t_bc[1,0]
+
+        Fz_inE =-T*sin(alpha_y + s.theta_tilt) - s.M_RNA*g # TODO potential softening correction
+
+        Fx_inE = T*cos(alpha_y + s.theta_tilt)
+#         Fx_inE = T*cos(s.theta_tilt)
+
+        
+        My_inE = 0
+        My_inE += s.M_RNA*g*( rhoN_x*cos(alpha_y) + rhoN_z*sin(alpha_y))
+        My_inE += T*(rNR_x*sin(s.theta_tilt) + rNR_z*cos(s.theta_tilt) )
+
+
+        GF =0
+        GF += Fx_inE * ux1c
+        GF += vy1c* My_inE
+
+        return GF
+
+
+    def print_info(s):
+        print('----------------------------------------------------------------')
+        print('main_axis :', s.main_axis)
+        print('gravity   :', s.gravity)
+        print('tilt      :', s.theta_tilt*180/np.pi)
+        print('cone      :', s.theta_cone*180/np.pi)
+        print('yaw       :', s.theta_yaw *180/np.pi)
+
+    def print_origins(s):
+        print('Origin T :',s.Twr.r_O.T)
+        print('Origin N :',s.Nac.r_O.T)
+        print('Origin R :',s.Blds[0].r_O.T)
+        print('Origin S :',s.Sft.r_O.T)
+
+    def print_RNA(s):
+        print('----------------- RNA ---------------------------------------')
+        print('M_RNA      ', s.M_RNA)
+        print('r_NGrna_inN',s.r_NGrna_inN.T)
+        print('     r_NGnac_inN ',s.r_NGnac_inN.T , 'M_nac',s.Nac.Mass)
+        print('     r_NGhub_inN ',s.r_NGhub_inN.T , 'M_hub',s.Sft.Mass)
+        print('     r_NGrot_inN ',s.r_NGrot_inN.T , 'M_rot',s.M_rot)
+
+    def print_couplings(s):
+        print('---------------Couplings ---------------------------------------')
+        print('Constant: (Bhat_t)')
+        print(s.Twr.Bhat_t_bc) # Constant
+        print('Time varying:')
+        print(s.Twr.alpha_couplings) # Time varying function of Twr.gzf
+
+    def __repr__(self):
+        self.print_info()
+        self.print_origins()
+        self.print_RNA()
+        self.print_couplings()
+        return ''
+
+
+
+
+
+
+
+
 # --------------------------------------------------------------------------------}
 # --- Creating a TNSB model automatically 
 # --------------------------------------------------------------------------------{
@@ -85,9 +198,7 @@ def auto_assembly(Twr,Nac,Sft,Blds,q,r_ET_inE,r_TN_inT,r_NS_inN,r_SR_inS,main_ax
 
     MM[np.abs(MM)< 1e-09] = 0
     # --- returning everthin in a structure class
-    class Structure():
-        pass
-    Struct      = Structure()
+    Struct      = Structure(main_axis=main_axis,theta_cone=theta_cone_y,theta_tilt=theta_tilt_y,bTiltBeforeNac=bTiltBeforeNac)
     Struct.Grd  = Grd
     Struct.Twr  = Twr
     Struct.Nac  = Nac
@@ -96,16 +207,13 @@ def auto_assembly(Twr,Nac,Sft,Blds,q,r_ET_inE,r_TN_inT,r_NS_inN,r_SR_inS,main_ax
     Struct.MM   = MM
     Struct.KK   = KK
     Struct.DD   = DD
-
-
-    Struct.alpha=Twr.alpha_couplings
-
+    Struct.q    = q
     Struct.r_ET_inE=r_ET_inE
     Struct.r_TN_inT=r_TN_inT
     Struct.r_NS_inN=r_NS_inN
     Struct.r_SR_inS=r_SR_inS
 
-    Struct.iPsi = Twr.nf # Index of DOF corresponding to azimuth
+    Struct.init_trigger()
 
     return Struct
 
@@ -145,13 +253,14 @@ def manual_assembly(Twr,Nac,Sft,Blds,q,r_ET_inE,r_TN_inT,r_NS_inN,r_SR_inS,main_
     # link E-T
     R_ET     = np.identity(3)
     B_T      = np.array([])
-    # B_T      = fBMatRecursion(,np.vstack((Bx_ET,Bt_ET)),R_ET,r_ET)
+    # B_T      = fBMatRecursion(,np.vstack((Bx_ET,Bt_ET)),R_ET,r_ET_inE)
     B_T_inT  = fB_inB(R_ET, B_T)
     BB_T_inT = fB_aug(B_T_inT, Twr.nf)
     MM_T     = fBMB(BB_T_inT,Twr.MM)
     KK_T     = fBMB(BB_T_inT,Twr.KK)
     DD_T     = fBMB(BB_T_inT,Twr.DD)
 
+    Twr.r_O    = r_ET_inE
     Twr.R_0b   = R_ET
     Twr.B      = B_T    
     Twr.B_inB  = B_T_inT
@@ -170,12 +279,14 @@ def manual_assembly(Twr,Nac,Sft,Blds,q,r_ET_inE,r_TN_inT,r_NS_inN,r_SR_inS,main_
         elif main_axis=='z':
             Bx_TN = np.array([[1],[0],[0]])
         Bt_TN = np.array([[0],[CyT[0]],[0]])
+        Twr.gzf = q[0,0]
         alpha_y = np.dot(CyT.ravel(), q[0,0].ravel())
     elif Twr.nf == 2:
         if main_axis=='x':
             Bx_TN = np.array([[0,0],[0,0],[1,1]])
         elif main_axis=='z':
             Bx_TN = np.array([[1,1],[0,0],[0,0]])
+        Twr.gzf = q[0:2,0]
         Bt_TN = np.array([[0,0],[CyT[0],CyT[1]],[0,0]])
         alpha_y = np.dot(CyT.ravel() , q[:2,0].ravel())
     else:
@@ -192,6 +303,7 @@ def manual_assembly(Twr,Nac,Sft,Blds,q,r_ET_inE,r_TN_inT,r_NS_inN,r_SR_inS,main_
     MM_N     = fBMB(BB_N_inN,Nac.MM)
     KK_N     = fBMB(BB_N_inN,Nac.KK)
 
+    Nac.r_O    = Twr.r_O + np.dot(Twr.R_0b, r_TN_inT)
     Nac.R_0b   = R_EN
     Nac.B      = B_N    
     Nac.B_inB  = B_N_inN
@@ -218,6 +330,7 @@ def manual_assembly(Twr,Nac,Sft,Blds,q,r_ET_inE,r_TN_inT,r_NS_inN,r_SR_inS,main_
     MM_S     = fBMB(BB_S_inS,Sft.MM)
     KK_S     = fBMB(BB_S_inS,Sft.KK)
 
+    Sft.r_O    = Nac.r_O + r_NS
     Sft.R_0b   = R_ES
     Sft.B      = B_S    
     Sft.B_inB  = B_S_inS
@@ -253,6 +366,7 @@ def manual_assembly(Twr,Nac,Sft,Blds,q,r_ET_inE,r_TN_inT,r_NS_inN,r_SR_inS,main_
         KK_B +=     fBMB(BB_B_inB,B.KK)
         DD_B +=     fBMB(BB_B_inB,B.DD)
 
+        B.r_O    = Sft.r_O + r_SR
         B.B      = B_R
         B.B_inB  = B_B_inB
         B.BB_inB = BB_B_inB
@@ -318,9 +432,8 @@ def manual_assembly(Twr,Nac,Sft,Blds,q,r_ET_inE,r_TN_inT,r_NS_inN,r_SR_inS,main_
 
 
     # --- returning everthin in a structure class
-    class Structure():
-        pass
-    Struct      = Structure()
+    Struct      = Structure(main_axis=main_axis,theta_cone=theta_cone_y,theta_tilt=theta_tilt_y,bTiltBeforeNac=bTiltBeforeNac)
+    Struct.Grd = GroundBody()
     Struct.Twr  = Twr
     Struct.Nac  = Nac
     Struct.Sft  = Sft
@@ -328,16 +441,12 @@ def manual_assembly(Twr,Nac,Sft,Blds,q,r_ET_inE,r_TN_inT,r_NS_inN,r_SR_inS,main_
     Struct.MM   = MM
     Struct.KK   = KK
     Struct.DD   = DD
-
+    Struct.q    = q
     Struct.r_ET_inE=r_ET_inE
     Struct.r_TN_inT=r_TN_inT
     Struct.r_NS_inN=r_NS_inN
     Struct.r_SR_inS=r_SR_inS
-
-    Struct.CyT=CyT
-    Struct.alpha=[alpha_y]
-
-    Struct.iPsi = iPsi # Index 
+    Struct.init_trigger()
 
     return Struct
 

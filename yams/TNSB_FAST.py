@@ -151,6 +151,10 @@ def FASTmodel2TNSB(ED_or_FST_file,nB=3,nShapes_twr=2, nShapes_bld=0,nSpan_twr=10
         print('Initial conditions:')
         print(q_init)
 
+    # --- Useful data
+    Struct.ED=ED
+
+
     return Struct
 
 

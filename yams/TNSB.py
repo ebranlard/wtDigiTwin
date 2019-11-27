@@ -51,7 +51,7 @@ class Structure():
         s.nShapes_bld = s.Blds[0].nf
 
 
-    def GF(s,T,x):
+    def GF(s,T,x,alpha_y_fact=1):
         """ 
         T is the force along the shaft
         """
@@ -63,7 +63,7 @@ class Structure():
         # update tower kinematics
         s.Twr.gzf=x 
         alpha = s.Twr.alpha_couplings
-        alpha_y=alpha[0]
+        alpha_y=alpha[1]*alpha_y_fact
 
         rhoN_x = s.r_NGrna_inN[0,0]
         rhoN_z = s.r_NGrna_inN[2,0]
@@ -71,24 +71,61 @@ class Structure():
         rNR_z  = s.r_NR_inN[2,0]
         g      = s.gravity
         ux1c   = 1
-        vy1c   = s.Twr.Bhat_t_bc[1,0]
+        vy1c   = s.Twr.Bhat_t_bc[1,0]  # Bhat_t_bc[1,j]= self.PhiV[j][0,iNode]
+        ky1c   = s.Twr.PhiK[0][0,-1]
 
         Fz_inE =-T*sin(alpha_y + s.theta_tilt) - s.M_RNA*g # TODO potential softening correction
 
         Fx_inE = T*cos(alpha_y + s.theta_tilt)
 #         Fx_inE = T*cos(s.theta_tilt)
 
-        
+
+        # --- Softening is already in K
+        #         k  = x[0] * s.Twr.PhiK[0][0,:]
+        #         vL = x[0] * vy1c
+        #         U  =        s.Twr.PhiU[0][0,:]
+        #         GF_soft=0
+        #         GF_soft+= np.trapz(+U*k*Fz_inE   , s.Twr.s_span)
+        #         GF_soft+=          -vL*Fz_inE*ux1c
+
         My_inE = 0
         My_inE += s.M_RNA*g*( rhoN_x*cos(alpha_y) + rhoN_z*sin(alpha_y))
-        My_inE += T*(rNR_x*sin(s.theta_tilt) + rNR_z*cos(s.theta_tilt) )
+        My_inE +=T*(rNR_x*sin(s.theta_tilt) + rNR_z*cos(s.theta_tilt) )
 
 
         GF =0
-        GF += Fx_inE * ux1c
+        GF += Fx_inE        * ux1c
         GF += vy1c* My_inE
+        # GF = GF_soft  
 
         return GF
+
+    def GF_lin(s,T,x,bFull=True):
+        """ 
+        T is the force along the shaft
+        Fisrt linearization: assumes the sum of alpha_y small
+        """
+        if (s.nShapes_twr!=1):
+            raise NotImplementedError('Number of shape function not 1')
+        if s.main_axis=='x':
+            raise NotImplementedError('Main axis along x')
+
+        rhoN_x = s.r_NGrna_inN[0,0]
+        rhoN_z = s.r_NGrna_inN[2,0]
+        rNR_x  = s.r_NR_inN[0,0]
+        rNR_z  = s.r_NR_inN[2,0]
+        g      = s.gravity
+        ux1c   = s.Twr.Bhat_x_bc[1,0]
+        vy1c   = s.Twr.Bhat_t_bc[1,0]  # Bhat_t_bc[1,j]= self.PhiV[j][0,iNode]
+
+        GF  =   T*cos(s.theta_tilt) 
+        if bFull:
+            GF += - T* vy1c * sin(s.theta_tilt) * x[0]
+            GF += (vy1c**2 * s.M_RNA*g * rhoN_z) * x[0]
+            GF +=  T*vy1c*(rNR_x*sin(s.theta_tilt) + rNR_z*cos(s.theta_tilt) ) 
+            GF += vy1c * s.M_RNA*g * rhoN_x
+        return GF
+
 
 
     def print_info(s):

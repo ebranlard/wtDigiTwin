@@ -88,7 +88,7 @@ class TabulatedWSEstimator():
         if OperFile is not None:
             import weio
             self.Oper = weio.read(OperFile).toDataFrame()
-            print(self.Oper)
+            #print(self.Oper)
             self.WS   =self.Oper['WS_[m/s]'].values
             self.Omega=self.Oper['RotSpeed_[rpm]'].values*2*np.pi/60
             self.RtAeroMxh=self.Oper['RtAeroMxh_[kN-m]'].values*1000

@@ -2,7 +2,7 @@ import numpy as np
 import unittest
 from scipy.linalg import expm
 
-def fEstimateKFTimeStep(u1,y1,z0,A,B,G,J,P0,Q,R): 
+def EstimateKFTimeStep(u1,y1,z0,Xxd,Xud,Yx,Yu,P0,Q,R): 
     """ Performs one time step of Kalman filter estimation 
 
     INPUTS:
@@ -14,21 +14,21 @@ def fEstimateKFTimeStep(u1,y1,z0,A,B,G,J,P0,Q,R):
      [1] Lourens"""
         
     # estimate next step
-    z1m   = A.dot(z0)  + B.dot(u1)
-    y1hat = G.dot(z1m) + J.dot(u1)
-    P1m   = (A.dot(P0)).dot(A.T) + Q
+    z1m   = Xxd.dot(z0)  + Xud.dot(u1)
+    y1hat = Yx.dot(z1m)  + Yu.dot(u1)
+    P1m   = (Xxd.dot(P0)).dot(Xxd.T) + Q
     
     # Calculate Kalman gain
     # same as Lk from [1] - And their Rtilde_k is G*P1m*G'+R
-    Kk =  np.dot(P1m,G.T).dot( np.linalg.inv(((G.dot(P1m)).dot(G.T) + R))) 
+    Kk =  np.dot(P1m,Yx.T).dot( np.linalg.inv(((Yx.dot(P1m)).dot(Yx.T) + R))) 
     # update estimate with measurement
     z1 = z1m + Kk.dot(y1 - y1hat)
     
-    P1 = (np.eye(A.shape[0]) - Kk.dot(G) ).dot(P1m)
+    P1 = (np.eye(Xxd.shape[0]) - Kk.dot(Yx) ).dot(P1m)
     return z1,P1,Kk
 
 
-def fKFDiscretize(Xx,Xu,dt,method='exponential'):
+def KFDiscretize(Xx,Xu,dt,method='exponential'):
     """ Discretize the continuous states matrices Xx, Xu
     
     "Real" system:
@@ -72,7 +72,7 @@ def fKFDiscretize(Xx,Xu,dt,method='exponential'):
 
     return Xxd,Xud
 
-def fBuildSystem_Linear(M,C,K,Ya,Yv,Yq,Fp=None,Pp=None,Yp=None,Method='default'):
+def BuildSystem_Linear(M,C,K,Ya,Yv,Yq,Fp=None,Pp=None,Yp=None,Yu=None,Method='default'):
     """ Takes system matrices of a mechanical system, returns a state matrix.
     The state matrix may be an "augmented matrix", in which case Fp, Pp, should be provided
 
@@ -94,38 +94,41 @@ def fBuildSystem_Linear(M,C,K,Ya,Yv,Yq,Fp=None,Pp=None,Yp=None,Method='default')
     """
     nDOF = M.shape[0]
     nY   = Yq.shape[0]
-    if 'default' == Method:
+    if Yu is None:
+        nU = 0
+        Yu = np.zeros((nY,nU))
+    else:
+        nU = Yu.shape[0]
+
+    if Method=='default':
         Z=np.zeros((nDOF,nDOF))
         I=np.eye(nDOF)
         Xx = np.block( [ [Z , I ], [ mM_K, mM_C] ])
         Xu = 0
         Yx = np.block( [ Yq + np.dot(Ya,mM_K),  Yv + np.dot(Ya, mM_C) ] )
-        Yu = 0
-    else:
-        if 'augmented_first_order' == Method:
-            # Needs Fp and Pp to be defined!
-            if Fp is None or Pp is None:
-                raise Exception('Both Fp and Pp needs to be set with augmented first order method')
-            nP = Fp.shape[1]
-            if Yp is None:
-                Yp=np.zeros((nY,nP))
+    elif Method == 'augmented_first_order':
+        # Needs Fp and Pp to be defined!
+        if Fp is None or Pp is None:
+            raise Exception('Both Fp and Pp needs to be set with augmented first order method')
+        nP = Fp.shape[1]
+        if Yp is None:
+            Yp=np.zeros((nY,nP))
 
-            Z    = np.zeros((nDOF,nDOF))
-            Znnp = np.zeros((nDOF,nP  ))
-            Znpn = np.zeros((nP  ,nDOF))
-            I    = np.eye(nDOF)
-            mM_K = np.linalg.solve(-M,K)
-            mM_C = np.linalg.solve(-M,C)
-            M_Fp  = np.linalg.solve(M,Fp)
-            Xx = np.block( [ [Z, I ,Znnp] , [mM_K, mM_C, M_Fp], [Znpn, Znpn, Pp] ])
-            Xu = 0
-            Yx = np.block( [Yq + np.dot(Ya,mM_K), Yv + np.dot(Ya,mM_C), Yp+np.dot(Ya,M_Fp) ])
-#             print('Yq..:\n', Yq + np.dot(Ya,mM_K))
-#             print('Yv..:\n', Yv + np.dot(Ya,mM_C))
-#             print('Fp..:\n', Yp+np.dot(Ya,M_Fp) )
-            Yu = 0
-        else:
-            raise Exception('Method %s not implemented')
+        Z    = np.zeros((nDOF,nDOF))
+        Znnp = np.zeros((nDOF,nP  ))
+        Znpn = np.zeros((nP  ,nDOF))
+        I    = np.eye(nDOF)
+        mM_K = np.linalg.solve(-M,K)
+        mM_C = np.linalg.solve(-M,C)
+        M_Fp  = np.linalg.solve(M,Fp)
+        Xx = np.block( [ [Z, I ,Znnp] , [mM_K, mM_C, M_Fp], [Znpn, Znpn, Pp] ])
+        Xu = np.zeros((nDOF,nU))
+        Yx = np.block( [Yq + np.dot(Ya,mM_K), Yv + np.dot(Ya,mM_C), Yp+np.dot(Ya,M_Fp) ])
+#         print('Yq..:\n', Yq + np.dot(Ya,mM_K))
+#         print('Yv..:\n', Yv + np.dot(Ya,mM_C))
+#         print('Fp..:\n', Yp+np.dot(Ya,M_Fp) )
+    else:
+        raise Exception('Method %s not implemented')
     
     return Xx,Xu,Yx,Yu
 
@@ -175,8 +178,6 @@ def EmptySystemMat(nDOF_2nd, nY, nP=None, nU=None):
         Fu = np.zeros((nDOF_2nd,nU)) 
         Pu = np.zeros((nP,nU))       
 
-
-
     if (nU is None) and (nP is None):
         return M,C,K,Ya,Yv,Yq
     else:
@@ -205,7 +206,7 @@ class Test(unittest.TestCase):
         Xu[0,0]=1/2
         Xu[2,0]=1
         dt=0.5
-        Xxd,Xud = fKFDiscretize(Xx,Xu,dt,method='exponential')
+        Xxd,Xud = KFDiscretize(Xx,Xu,dt,method='exponential')
         #print('Xx\n',Xxd)
         #print('Xu\n',Xud)
         Xxd_ref=np.array([
@@ -231,8 +232,8 @@ class Test(unittest.TestCase):
         Xu[0,0]=1/2
         Xu[2,0]=1
         dt=0.5
-        Xxd_xp,Xud_xp = fKFDiscretize(Xx,Xu,dt,method = 'exponential'  )
-        Xxd_fe,Xud_fe = fKFDiscretize(Xx,Xu,dt,method = 'forward_euler')
+        Xxd_xp,Xud_xp = KFDiscretize(Xx,Xu,dt,method = 'exponential'  )
+        Xxd_fe,Xud_fe = KFDiscretize(Xx,Xu,dt,method = 'forward_euler')
         np.testing.assert_almost_equal(Xud_fe,Xud_xp,decimal=5)
 
         # TODO TODO, what to do of A
@@ -259,7 +260,7 @@ class Test(unittest.TestCase):
         Fp[0,1] = -1
         Yp[1,1] = 1 # Direct feed through of force
 
-        Xx,Xu,Yx,Yu = fBuildSystem_Linear(M,C,K,Ya,Yv,Yq,Fp=Fp,Pp=Pp,Yp=Yp,Method='augmented_first_order')
+        Xx,Xu,Yx,Yu = BuildSystem_Linear(M,C,K,Ya,Yv,Yq,Fp=Fp,Pp=Pp,Yp=Yp,Method='augmented_first_order')
         # Reference values for test
         Xx_ref, Xu_ref, Yx_ref, Yu_ref = EmptyStateMat(nDOF_ext,nU,nY)
         Xx_ref[0,1] = 1
@@ -300,7 +301,7 @@ class Test(unittest.TestCase):
         Fp[1,1] = 1  # dQ = p[1] -p[2]
         Fp[1,2] = -1 # dQ = p[1] -p[2]
 
-        Xx,Xu,Yx,Yu = fBuildSystem_Linear(M,C,K,Ya,Yv,Yq,Fp=Fp,Pp=Pp,Yp=Yp,Method='augmented_first_order')
+        Xx,Xu,Yx,Yu = BuildSystem_Linear(M,C,K,Ya,Yv,Yq,Fp=Fp,Pp=Pp,Yp=Yp,Method='augmented_first_order')
 
         # Reference values for test, NOTE: only true because no couplings assumed here
         Xx_ref, Xu_ref, Yx_ref, Yu_ref = EmptyStateMat(nDOF_ext,nU,nY)

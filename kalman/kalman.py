@@ -6,9 +6,13 @@ def EstimateKFTimeStep(u1,y1,z0,Xxd,Xud,Yx,Yu,P0,Q,R):
     """ Performs one time step of Kalman filter estimation 
 
     INPUTS:
-     u1: inputs at time n
-     y1: measurements at time n
-     z0: Kalman state estimate at time n-1
+      u1: inputs at time n
+      y1: measurements at time n
+      z0: Kalman state estimate at time n-1
+    OUTPUTS:
+      z1: States at time n
+      P1: Process covariance at time n
+      Kk: Kalman gain
 
      Equations number are compared to the following reference:
      [1] Lourens"""
@@ -98,13 +102,13 @@ def BuildSystem_Linear(M,C,K,Ya,Yv,Yq,Fp=None,Pp=None,Yp=None,Yu=None,Method='de
         nU = 0
         Yu = np.zeros((nY,nU))
     else:
-        nU = Yu.shape[0]
+        nU = Yu.shape[1]
 
     if Method=='default':
         Z=np.zeros((nDOF,nDOF))
         I=np.eye(nDOF)
         Xx = np.block( [ [Z , I ], [ mM_K, mM_C] ])
-        Xu = 0
+        Xu = np.zeros((2*nDOF,nU))
         Yx = np.block( [ Yq + np.dot(Ya,mM_K),  Yv + np.dot(Ya, mM_C) ] )
     elif Method == 'augmented_first_order':
         # Needs Fp and Pp to be defined!
@@ -182,7 +186,6 @@ def EmptySystemMat(nDOF_2nd, nY, nP=None, nU=None):
         return M,C,K,Ya,Yv,Yq
     else:
         return M,C,K,Ya,Yv,Yq,Yp,Yu,Fp,Fu,Pp,Pq,Pv
-
 
 
 

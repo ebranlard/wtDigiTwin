@@ -15,7 +15,6 @@ class KalmanFilter(object):
         self.iX={lab: i   for i,lab in enumerate(self.sX)}
         self.iY={lab: i   for i,lab in enumerate(self.sY)}
 
-
     @property
     def nX(self):
         return len(self.sX)
@@ -120,6 +119,29 @@ class KalmanFilter(object):
         self.Y_hat = np.zeros((self.nY,self.nt))
         self.Y     = np.zeros((self.nY,self.nt))
     
+    # TODO use property or dict syntax
+    def get_vY(self,lab):
+        return self.Y[self.iY[lab],:]
+    def set_vY(self,lab, val ):
+        self.Y[self.iY[lab],:]=val
+
+    def get_vX_hat(self,lab):
+        return self.X_hat[self.iX[lab],:]
+    def set_vX_hat(self,lab, val ):
+        self.X_hat[self.iX[lab],:]=val
+
+    def get_Y(self,lab,it):
+        return self.Y[self.iY[lab],it]
+    def set_Y(self,lab, val ):
+        self.Y[self.iY[lab],it]=val
+
+    def get_X_hat(self,lab,it):
+        return self.X_hat[self.iX[lab],it]
+    def set_X_hat(self,lab, val ):
+        self.X_hat[self.iX[lab],it]=val
+
+
+
     def initFromClean(self):
         x = self.X_clean[:,0]
         # x = np.zeros(nX)
@@ -180,3 +202,39 @@ class KalmanFilter(object):
             print('Sigma Y            to be used')
             for k,v in self.sigY.items():
                 print('Sigma {:10s}: {:12.3f}'.format(k,v))
+
+
+    # --------------------------------------------------------------------------------}
+    # --- Plot functions 
+    # --------------------------------------------------------------------------------{
+    def plot_Y(KF,fig=None):
+        import matplotlib
+        import matplotlib.pyplot as plt
+        # --- Compare measurements
+        cmap = matplotlib.cm.get_cmap('viridis')
+        COLRS = [(cmap(v)[0],cmap(v)[1],cmap(v)[2]) for v in np.linspace(0,1,3+1)]
+        if fig is None:
+            fig=plt.figure()
+        for j,s in enumerate(KF.sY):
+            ax=fig.add_subplot(KF.nY,1,j+1)
+            ax.plot(KF.time,KF.Y_clean[j,:],''  ,  color=COLRS[0] ,label='Clean')
+            ax.plot(KF.time,KF.Y[j      ,:],'-.',  color=COLRS[2] ,label='Noisy')
+            ax.plot(KF.time,KF.Y_hat[j  ,:],'--' , color=COLRS[1],label='Estimate')
+            ax.set_ylabel(s)
+        ax.set_title('Measurements Y')
+
+    def plot_X(KF,fig=None):
+        import matplotlib
+        import matplotlib.pyplot as plt
+        # --- Compare States
+        cmap = matplotlib.cm.get_cmap('viridis')
+        COLRS = [(cmap(v)[0],cmap(v)[1],cmap(v)[2]) for v in np.linspace(0,1,3+1)]
+        if fig is None:
+            fig=plt.figure()
+        for j,s in enumerate(KF.sX):
+            ax=fig.add_subplot(KF.nX,1,j+1)
+            ax.plot(KF.time,KF.X_clean[j,:],''  , color=COLRS[0],label='Clean')
+            ax.plot(KF.time,KF.X_hat  [j,:],'--', color=COLRS[1],label='Estimate')
+            ax.set_ylabel(s)
+        ax.set_title('States X')
+

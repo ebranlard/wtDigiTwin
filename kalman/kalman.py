@@ -122,7 +122,7 @@ def BuildSystem_Linear(M,C,K,Ya,Yv,Yq,Fp=None,Pp=None,Yp=None,Yu=None,Method='de
         mM_C = np.linalg.solve(-M,C)
         M_Fp  = np.linalg.solve(M,Fp)
         Xx = np.block( [ [Z, I ,Znnp] , [mM_K, mM_C, M_Fp], [Znpn, Znpn, Pp] ])
-        Xu = np.zeros((nDOF,nU))
+        Xu = np.zeros((2*nDOF+nP,nU))
         Yx = np.block( [Yq + np.dot(Ya,mM_K), Yv + np.dot(Ya,mM_C), Yp+np.dot(Ya,M_Fp) ])
 #         print('Yq..:\n', Yq + np.dot(Ya,mM_K))
 #         print('Yv..:\n', Yv + np.dot(Ya,mM_C))
@@ -269,7 +269,6 @@ class Test(unittest.TestCase):
         Xx_ref[1,3] = -1/J_LSS
         Yx_ref[0,1] = 1
         Yx_ref[1,3] = 1
-
         np.testing.assert_equal(Xx,Xx_ref)
         np.testing.assert_equal(Xu,Xu_ref)
         np.testing.assert_equal(Yx,Yx_ref)

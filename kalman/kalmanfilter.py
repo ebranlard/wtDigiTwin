@@ -238,3 +238,4 @@ class KalmanFilter(object):
             ax.set_ylabel(s)
         ax.set_title('States X')
 
+

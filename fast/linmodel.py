@@ -22,7 +22,7 @@ class FASTLinModel():
 
         # --- Loading linear model
         if StateFile is not None:
-            self.A,self.B,self.C,self.D = loadLinStateMatModel(StateFile)
+            self.A,self.B,self.C,self.D,self.M = loadLinStateMatModel(StateFile)
         else:
             raise NotImplementedError()
         self.sX = self.A.columns
@@ -59,40 +59,51 @@ class FASTLinModel():
 
 
 # Temporary hack, loading model from state file
-def loadLinStateMatModel(StateFile,nDOF=2):
+def loadLinStateMatModel(StateFile,nDOF=2, Adapt=True):
     import pickle
     def load(filename):
         with open(filename,'rb') as f:
             dat=pickle.load(f)
         return dat
 
-    (A,B,C,D) = load(StateFile)
-    A.iloc[3,:]=0 #
-    A.iloc[2,1]=0
-    A.iloc[2,3]=0
+    try:
+        (A,B,C,D,M) = load(StateFile)
+    except:
+        M=None
+        (A,B,C,D) = load(StateFile)
+    if Adapt==True:
+        A.iloc[3,:]=0 #
+        A.iloc[2,1]=0
+        A.iloc[2,3]=0
 
 
-    B.iloc[0,:]=0 
-    B.iloc[1,:]=0 
-    B.iloc[:,2]=0 # no pitch influence on states
-    B.iloc[2,1]=0 # No Qgen influence on qtdot
-    B.iloc[3,0]=0 # No Thrust influence of psi
-    D.iloc[0,1:]=0      # Only thrust influences IMU
+        B.iloc[0,:]=0 
+        B.iloc[1,:]=0 
+        B.iloc[:,2]=0 # no pitch influence on states
+        B.iloc[2,1]=0 # No Qgen influence on qtdot
+        B.iloc[3,0]=0 # No Thrust influence of psi
+        D.iloc[0,1:]=0      # Only thrust influences IMU
 
-    A.index.values[1]='psi_rot_[rad]'
-    A.columns.values[1]='psi_rot_[rad]'
-    A.index.values[3]='d_psi_rot_[rad]'
-    A.columns.values[3]='d_psi_rot_[rad]'
-    C.columns.values[1]='psi_rot_[rad]'
-    C.columns.values[3]='d_psi_rot_[rad]'
+        #A.index.values[1]='psi_rot_[rad]'
+        #A.columns.values[1]='psi_rot_[rad]'
+        #A.index.values[3]='d_psi_rot_[rad]'
+        #A.columns.values[3]='d_psi_rot_[rad]'
+        #C.columns.values[1]='psi_rot_[rad]'
+        #C.columns.values[3]='d_psi_rot_[rad]'
 
-    C.iloc[3,:]=0 # No states influence pitch
-    C.index.values[1]='RotSpeed_[rad/s]'
-    D.index.values[1]='RotSpeed_[rad/s]'
-    C.index.values[3]='BPitch1_[rad]'
-    D.index.values[3]='BPitch1_[rad]'
-    C.iloc[1,:]/=60/(2*np.pi) # RotSpeed output in radian/s
-    D.iloc[1,:]/=60/(2*np.pi) # RotSpeed output in radian/s
-    C.iloc[3,:]/=180/np.pi # Pitch output in radian
-    D.iloc[3,:]/=180/np.pi # Pitch output in radian
-    return A,B,C,D
+        C.iloc[3,:]=0 # No states influence pitch
+        C.index.values[1]='RotSpeed_[rad/s]'
+        D.index.values[1]='RotSpeed_[rad/s]'
+        C.index.values[2]='Qgen_[Nm]'
+        D.index.values[2]='Qgen_[Nm]'
+        C.index.values[3]='BPitch1_[rad]'
+        D.index.values[3]='BPitch1_[rad]'
+        C.iloc[1,:]/=60/(2*np.pi) # RotSpeed output in radian/s
+        D.iloc[1,:]/=60/(2*np.pi) # RotSpeed output in radian/s
+        C.iloc[2,:]*=1000 # GenTq in Nm
+        D.iloc[2,:]*=1000 # GenTq in Nm
+        D['Qgen_[Nm]']['Qgen_[Nm]']=1
+        C.iloc[3,:]/=180/np.pi # Pitch output in radian
+        D.iloc[3,:]/=180/np.pi # Pitch output in radian
+
+    return A,B,C,D,M

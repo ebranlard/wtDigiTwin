@@ -11,6 +11,22 @@ from fast.linmodel import FASTLinModel
 import welib.fastlib as fastlib
 import weio
 
+#          'WS':'Wind1VelX', 'pitch':'BldPitch1','TTacc':'NcIMUTAxs'}
+#          'Thrust':'RotThrust','Qaero':'RtAeroMxh','Qgen':'GenTq',
+# NOTE: RotThrust contain gravity and inertia
+DEFAULT_COL_MAP={
+  ' ut1    ' : ' TTDspFA_[m]                   ' ,
+  ' psi    ' : ' {Azimuth_[deg]} * np.pi/180   ' , # [deg] -> [rad]
+  ' ut1dot ' : ' NcIMUTVxs_[m/s]               ' ,
+  ' omega  ' : ' {RotSpeed_[rpm]} * 2*np.pi/60 ' , # [rpm] -> [rad/s]
+  ' Thrust ' : ' RtAeroFxh_[N]                 ' ,
+  ' Qaero  ' : ' RtAeroMxh_[N-m]               ' ,
+  ' Qgen   ' : ' {GenTq_[kN-m]}  *1000         ' , # [kNm] -> [Nm]
+  ' WS     ' : ' RtVAvgxh_[m/s]                ' ,
+  ' pitch  ' : ' {BldPitch1_[deg]} * np.pi/180 ' , # [deg]->[rad]
+  ' TTacc  ' : ' NcIMUTAxs_[m/s^2]             ' 
+}
+
 
 class KalmanFilterTNLin(KalmanFilter):
     def __init__(KF, FstFile, base, bThrustInStates, StateFile):
@@ -112,38 +128,20 @@ class KalmanFilterTNLin(KalmanFilter):
 
 
 
-    def loadMeasurements(KF, MeasFile, nUnderSamp=1, tRange=None):
+    def loadMeasurements(KF, MeasFile, nUnderSamp=1, tRange=None, ColMap=DEFAULT_COL_MAP):
         # --- Loading "Measurements"
-        ColMap = {'ut1':'TTDspFA', 'psi':'Azimuth','ut1dot':'NcIMUTVxs','omega':'RotSpeed',
-                 'Thrust':'RtAeroFxh','Qaero':'RtAeroMxh','Qgen':'GenTq',
-                 'WS':'RtVAvgxh', 'pitch':'BldPitch1','TTacc':'NcIMUTAxs'}
-        #          'WS':'Wind1VelX', 'pitch':'BldPitch1','TTacc':'NcIMUTAxs'}
-        #          'Thrust':'RotThrust','Qaero':'RtAeroMxh','Qgen':'GenTq',
-        # NOTE: RotThrust contain gravity and inertia
-
-        # TODO 
         nGear  = KF.WT.ED['GBRatio']
         df=weio.read(MeasFile).toDataFrame()
-        df.columns = [  v.split('_[')[0] for v in df.columns.values] 
-        if tRange is not None:
-            df=df[(df['Time']>= tRange[0]) & (df['Time']<= tRange[1])] # reducing time range
         df=df.iloc[::nUnderSamp,:]                      # reducing sampling
-        time = df['Time'].values
+        if tRange is not None:
+            df=df[(df['Time_[s]']>= tRange[0]) & (df['Time_[s]']<= tRange[1])] # reducing time range
+        time = df['Time_[s]'].values
         dt   = (time[-1] - time[0])/(len(time)-1)
-        df['GenSpeed'] *= 2*np.pi/60 # converted to rad/s
-        df['RotSpeed'] *= 2*np.pi/60 # converted to rad/s
-        #df['GenTq']    *= 1000*nGear # Convert to rot torque
-        df['GenTq']    *= 1000 # HSS
-        df['Azimuth']  *= np.pi/180  # rad
-        df['RotTorq']  *= 1000 # [kNm]->[Nm]
-        df['RotThrust']*= 1000 # [kN]->[N]
-        df['BldPitch1']*= np.pi/180 # [deg]->[rad]
-        KF.df=df
-
+        KF.df = fastlib.remap_df(df, ColMap, bColKeepNewOnly=False)
         # --- 
         KF.discretize(dt, method='exponential')
         KF.setTimeVec(time)
-        KF.setCleanValues(df,ColMap)
+        KF.setCleanValues(KF.df)
 
         # --- Estimate sigmas from measurements
         sigX_c,sigY_c = KF.sigmasFromClean(factor=1)
@@ -219,7 +217,10 @@ class KalmanFilterTNLin(KalmanFilter):
         kappa  = np.interp(z_test, WT.Twr.s_span, WT.Twr.PhiK[0][0,:])
         qx    = KF.X_hat[KF.iX['ut1']]
         KF.M_sim = [qx*EI[i]*kappa[i]/1000 for i in range(len(z_test))]                 # in [kNm]
-        KF.M_ref = [KF.df['TwHt{:d}MLyt'.format(i+1)].values for i in range(len(z_test)) ] # in [kNm]
+        try:
+            KF.M_ref = [KF.df['TwHt{:d}MLyt_[kN-m]'.format(i+1)].values for i in range(len(z_test)) ] # in [kNm]
+        except:
+            KF.M_ref = [KF.df['TwHt{:d}MLyt'.format(i+1)].values for i in range(len(z_test)) ] # in [kNm]
         return KF.M_sim, KF.M_ref
 
     def export(KF,OutputFile):
@@ -364,14 +365,14 @@ class KalmanFilterTNLin(KalmanFilter):
 
 
 
-def KalmanFilterTNLinSim(FstFile, MeasFile, OutputFile, base, bThrustInStates, StateFile, nUnderSamp, tRange, bFilterAcc, nFilt, NoiseRFactor, sigX=None, sigY=None, bExport=False):
+def KalmanFilterTNLinSim(FstFile, MeasFile, OutputFile, base, bThrustInStates, StateFile, nUnderSamp, tRange, bFilterAcc, nFilt, NoiseRFactor, sigX=None, sigY=None, bExport=False, ColMap=DEFAULT_COL_MAP):
     # ---
     KF=KalmanFilterTNLin(FstFile, base, bThrustInStates, StateFile)
     print(KF)
     # --- Loading "Measurements"
     # Defining "clean" values 
     # Estimate sigmas from measurements
-    KF.loadMeasurements(MeasFile, nUnderSamp=nUnderSamp, tRange=tRange)
+    KF.loadMeasurements(MeasFile, nUnderSamp=nUnderSamp, tRange=tRange, ColMap=ColMap)
     KF.sigX=sigX
     KF.sigY=sigY
 

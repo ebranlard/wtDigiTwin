@@ -125,21 +125,44 @@ class KalmanFilter(object):
         return len(self.time)
 
     def setCleanValues(self,df,ColMap=None):
+        if ColMap is None:
+            ColMap=dict()
+            for k in df.columns.values:
+                ColMap[k]=k
+
         # --- Defining "clean" values 
         self.X_clean = np.zeros((self.nX,self.nt))
         self.Y_clean = np.zeros((self.nY,self.nt))
         self.U_clean = np.zeros((self.nU,self.nt))
         self.S_clean = np.zeros((self.nS,self.nt))
         for i,lab in enumerate(self.sX):
-            self.X_clean[i,:]=df[ColMap[lab]]
+            if ColMap[lab] not in df.columns:
+                print('[WARN] Clean state not available      :', ColMap[lab])
+            else:
+                self.X_clean[i,:]=df[ColMap[lab]]
+
         for i,lab in enumerate(self.sY):
-            self.Y_clean[i,:]=df[ColMap[lab]]
+            if ColMap[lab] not in df.columns:
+                print('[WARN] Clean measurement not available:', ColMap[lab])
+            else:
+                self.Y_clean[i,:]=df[ColMap[lab]]
         for i,lab in enumerate(self.sU):
-            self.U_clean[i,:] =df[ColMap[lab]]
+            if ColMap[lab] not in df.columns:
+                print('[WARN] Clean output not available     :', ColMap[lab])
+            else:
+                self.U_clean[i,:] =df[ColMap[lab]]
         for i,lab in enumerate(self.sS):
-            self.S_clean[i,:] =df[ColMap[lab]]
+            if ColMap[lab] not in df.columns:
+                print('[WARN] Clean misc var not available   :', ColMap[lab])
+            else:
+                self.S_clean[i,:] =df[ColMap[lab]]
 
     def setY(self,df,ColMap=None):
+        if ColMap is None:
+            ColMap=dict()
+            for k in df.columns.values:
+                ColMap[k]=k
+
         for i,lab in enumerate(self.sY):
             self.Y[i,:]=df[ColMap[lab]]
 

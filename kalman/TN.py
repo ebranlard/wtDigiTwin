@@ -10,6 +10,18 @@ from yams.TNSB_FAST import FASTmodel2TNSB
 import welib.fastlib as fastlib
 import weio
 
+DEFAULT_COL_MAP={
+  ' ut1    ' : ' TTDspFA_[m]                   ' ,
+  ' psi    ' : ' {Azimuth_[deg]} * np.pi/180   ' , # [deg] -> [rad]
+  ' ut1dot ' : ' NcIMUTVxs_[m/s]               ' ,
+  ' omega  ' : ' {RotSpeed_[rpm]} * 2*np.pi/60 ' , # [rpm] -> [rad/s]
+  ' Thrust ' : ' RtAeroFxh_[N]                 ' ,
+  ' Qaero  ' : ' RtAeroMxh_[N-m]               ' ,
+  ' Qgen   ' : ' {GenTq_[kN-m]}  *1000 * nGear ' , # [kNm] -> [Nm] LSS
+  ' WS     ' : ' RtVAvgxh_[m/s]                ' ,
+  ' pitch  ' : ' BldPitch1_[deg]'                , # [deg]->[rad]
+  ' TTacc  ' : ' NcIMUTAxs_[m/s^2]             ' 
+}
 
 class KalmanFilterTN(KalmanFilter):
     def __init__(KF, FstFile, base,  bThrustInStates=True, nShapes_twr=1):
@@ -89,6 +101,7 @@ class KalmanFilterTN(KalmanFilter):
         df=df.iloc[::nUnderSamp,:]                      # reducing sampling
         time = df['Time'].values
         dt   = (time[-1] - time[0])/(len(time)-1)
+
         df['GenSpeed'] *= 2*np.pi/60 # converted to rad/s
         df['RotSpeed'] *= 2*np.pi/60 # converted to rad/s
         df['GenTq']    *= 1000*nGear # Convert to rot torque

@@ -2,11 +2,12 @@ from .kalman import *
 import numpy as np
 
 class KalmanFilter(object):
-    def __init__(self,sX0,sXa,sU,sY):
+    def __init__(self,sX0,sXa,sU,sY,sS=[]):
         self.sX0 = sX0
         self.sXa = sXa
         self.sU  = sU
         self.sY  = sY
+        self.sS  = sS # Storage
 
         #  State vector is States and Augmented states
         self.sX=np.concatenate((self.sX0,self.sXa))
@@ -14,6 +15,8 @@ class KalmanFilter(object):
         # --- Defining index map for convenience
         self.iX={lab: i   for i,lab in enumerate(self.sX)}
         self.iY={lab: i   for i,lab in enumerate(self.sY)}
+        self.iU={lab: i   for i,lab in enumerate(self.sU)}
+        self.iS={lab: i   for i,lab in enumerate(self.sS)}
 
     @property
     def nX(self):
@@ -35,14 +38,37 @@ class KalmanFilter(object):
     def nX0(self):
         return len(self.sX0)
 
+    @property
+    def nS(self):
+        return len(self.sS)
+
     def __repr__(self):
+        def pretty_PrintMat(M,fmt='{:11.3e}',fmt_int='    {:4d}   ',sindent='   '):
+            s=sindent
+            for iline,line in enumerate(M):
+                s+=''.join([(fmt.format(v) if int(v)!=v else fmt_int.format(int(v))) for v in line ])
+                s+='\n'+sindent
+            return s
+
         s=''
         s+='<kalman.KalmanFilter object> \n'
-        s+='  sX0 : {} \n'.format(self.sX)
+        s+='  sX  : {} \n'.format(self.sX)
         s+='  sX0 : {} \n'.format(self.sX0)
         s+='  sX1 : {} \n'.format(self.sXa)
         s+='  sU  : {} \n'.format(self.sU)
         s+='  sY  : {} \n'.format(self.sY)
+        s+='  sS  : {} \n'.format(self.sS)
+        try:
+            s+=' Xx: State-State Matrix  \n'
+            s+=pretty_PrintMat(self.Xx)+'\n'
+            s+=' Xu: State-Input Matrix  \n'
+            s+=pretty_PrintMat(self.Xu)+'\n'
+            s+=' Yx: Output-State Matrix  \n'
+            s+=pretty_PrintMat(self.Yx)+'\n'
+            s+=' Yu: Output-Input Matrix  \n'
+            s+=pretty_PrintMat(self.Yu)+'\n'
+        except:
+            pass
         return s
 
 
@@ -103,12 +129,15 @@ class KalmanFilter(object):
         self.X_clean = np.zeros((self.nX,self.nt))
         self.Y_clean = np.zeros((self.nY,self.nt))
         self.U_clean = np.zeros((self.nU,self.nt))
+        self.S_clean = np.zeros((self.nS,self.nt))
         for i,lab in enumerate(self.sX):
             self.X_clean[i,:]=df[ColMap[lab]]
         for i,lab in enumerate(self.sY):
             self.Y_clean[i,:]=df[ColMap[lab]]
         for i,lab in enumerate(self.sU):
             self.U_clean[i,:] =df[ColMap[lab]]
+        for i,lab in enumerate(self.sS):
+            self.S_clean[i,:] =df[ColMap[lab]]
 
     def setY(self,df,ColMap=None):
         for i,lab in enumerate(self.sY):
@@ -118,6 +147,7 @@ class KalmanFilter(object):
         self.X_hat = np.zeros((self.nX,self.nt))
         self.Y_hat = np.zeros((self.nY,self.nt))
         self.Y     = np.zeros((self.nY,self.nt))
+        self.S_hat = np.zeros((self.nS,self.nt))
     
     # TODO use property or dict syntax
     def get_vY(self,lab):
@@ -237,5 +267,24 @@ class KalmanFilter(object):
             ax.plot(KF.time,KF.X_hat  [j,:],'--', color=COLRS[1],label='Estimate')
             ax.set_ylabel(s)
         ax.set_title('States X')
+
+
+    def plot_S(KF,fig=None):
+        if KF.nS==0:
+            return
+        import matplotlib
+        import matplotlib.pyplot as plt
+        # --- Compare States
+        cmap = matplotlib.cm.get_cmap('viridis')
+        COLRS = [(cmap(v)[0],cmap(v)[1],cmap(v)[2]) for v in np.linspace(0,1,3+1)]
+        if fig is None:
+            fig=plt.figure()
+        for j,s in enumerate(KF.sS):
+            ax=fig.add_subplot(KF.nS,1,j+1)
+            ax.plot(KF.time,KF.S_clean[j,:],''  , color=COLRS[0],label='Clean')
+            ax.plot(KF.time,KF.S_hat  [j,:],'--', color=COLRS[1],label='Estimate')
+            ax.set_ylabel(s)
+        ax.set_title('Intermediate values S')
+
 
 

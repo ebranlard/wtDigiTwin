@@ -46,20 +46,26 @@ class FASTLinModel():
         self.q_init = q_init
 
     def __repr__(self):
+        def pretty_PrintMat(M,fmt='{:11.3e}',fmt_int='    {:4d}   ',sindent='   '):
+            s=sindent
+            for iline,line in enumerate(M):
+                s+=''.join([(fmt.format(v) if int(v)!=v else fmt_int.format(int(v))) for v in line ])
+                s+='\n'+sindent
+            return s
         s=''
         s+='<FASTLinModel object>\n'
         s+='Attributes:\n'
         s+=' - A: State-State Matrix  \n'
-        s+=str(self.A)+'\n'
+        s+=pretty_PrintMat(self.A.values)+'\n'
         s+=' - B: State-Input Matrix  \n'
-        s+=str(self.B)+'\n'
+        s+=pretty_PrintMat(self.B.values)+'\n'
         s+=' - q_init: Initial conditions (state) \n'
         s+=str(self.q_init)+'\n'
         return s
 
 
 # Temporary hack, loading model from state file
-def loadLinStateMatModel(StateFile,nDOF=2, Adapt=True):
+def loadLinStateMatModel(StateFile,nDOF=2, Adapt=True, ExtraZeros=False):
     import pickle
     def load(filename):
         with open(filename,'rb') as f:
@@ -72,17 +78,20 @@ def loadLinStateMatModel(StateFile,nDOF=2, Adapt=True):
         M=None
         (A,B,C,D) = load(StateFile)
     if Adapt==True:
-        A.iloc[3,:]=0 #
-        A.iloc[2,1]=0
-        A.iloc[2,3]=0
+        A.iloc[3,:]=0 # No state influence of ddpsi ! <<<< Important
+        A.iloc[2,1]=0 # No psi influence of  ddqt
+        A.iloc[2,3]=0 # No psi_dot influence of ddqt
 
 
-        B.iloc[0,:]=0 
-        B.iloc[1,:]=0 
-        B.iloc[:,2]=0 # no pitch influence on states
-        B.iloc[2,1]=0 # No Qgen influence on qtdot
-        B.iloc[3,0]=0 # No Thrust influence of psi
-        D.iloc[0,1:]=0      # Only thrust influences IMU
+        if ExtraZeros:
+            B.iloc[0,:]=0 # No thrust influence on dqt
+            B.iloc[1,:]=0 # No thrust influence on dpsi
+        B.iloc[:,2]=0 # no pitch influence on states ! <<<< Important since value may only be valid around a given pitch
+        if ExtraZeros:
+            B.iloc[2,1]=0 # No Qgen influence on qtdot
+            B.iloc[3,0]=0 # No thrust influence on psi
+            D.iloc[0,1]=0  # No Qgen influence on IMU
+        D.iloc[0,2]=0  # No pitch influences on IMU
 
         #A.index.values[1]='psi_rot_[rad]'
         #A.columns.values[1]='psi_rot_[rad]'
@@ -92,6 +101,7 @@ def loadLinStateMatModel(StateFile,nDOF=2, Adapt=True):
         #C.columns.values[3]='d_psi_rot_[rad]'
 
         C.iloc[3,:]=0 # No states influence pitch
+        C.iloc[2,3]=0 # No influence of psi on Qgen !<<< Important
         C.index.values[1]='RotSpeed_[rad/s]'
         D.index.values[1]='RotSpeed_[rad/s]'
         C.index.values[2]='Qgen_[Nm]'

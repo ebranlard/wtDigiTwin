@@ -5,69 +5,110 @@ from .filters import moving_average
 from ws_estimator.tabulated import TabulatedWSEstimator
 import yams
 from yams.TNSB_FAST import FASTmodel2TNSB
+from fast.linmodel import FASTLinModel
 
 # --- External dependencies!
 import welib.fastlib as fastlib
 import weio
 
 
-class KalmanFilterTN(KalmanFilter):
-    def __init__(KF, FstFile, base,  bThrustInStates=True, nShapes_twr=1):
+class KalmanFilterTNLin(KalmanFilter):
+    def __init__(KF, FstFile, base, bThrustInStates, StateFile):
         """
 
         """
-
         nShapes_bld   = 0 # Hard coded for TN
-        nDOF_2nd      = nShapes_twr+1 # Mech DOFs     :  q = [u, psi]
-        
-        if nShapes_twr>1:
-            raise NotImplementedError()
+        nDOF_2nd      = 2 # Mech DOFs     :  q = [u, psi]
+        KF.bThrustInStates = bThrustInStates
         if bThrustInStates:
             sStates     = np.array(['ut1'  ,'psi'  ,'ut1dot','omega'] )
-            sAug        = np.array(['Thrust' ,'Qaero'  ,'Qgen','WS'] )
+            sAug        = np.array(['Qaero','Thrust'])
             sMeas       = np.array(['TTacc','omega','Qgen','pitch'])
-            sInp        = np.array(['pitch'])
+            sInp        = np.array(['Qgen','pitch'])
+            sStor       = np.array(['WS'])
         else:
-            sStates     = np.array(['ut1'  ,'psi'  ,'ut1dot','omega','Qaero','Qgen'] )
-            sAug        = np.array(['Qaero','Qgen','WS'] )
+            sStates     = np.array(['ut1'  ,'psi'  ,'ut1dot','omega'] )
+            sAug        = np.array(['Qaero'])
             sMeas       = np.array(['TTacc','omega','Qgen','pitch'])
-            sInp        = np.array(['Thrust','pitch'])
+            sInp        = np.array(['Thrust','Qgen','pitch'])
+            sStor       = np.array(['Thrust','WS'])
 
-        super(KalmanFilterTN, KF).__init__(sX0=sStates,sXa=sAug,sU=sInp,sY=sMeas)
+        super(KalmanFilterTNLin, KF).__init__(sX0=sStates, sXa=sAug, sU=sInp, sY=sMeas, sS=sStor)
 
         # --- Building state/outputs connection matrices
-        M,C,K,Ya,Yv,Yq,Yp,Yu,Fp,Fu,Pp,Pq,Pv = EmptySystemMat (int(KF.nX0/2), KF.nY, KF.nP, KF.nU)
+#         M,C,K,Ya,Yv,Yq,Yp,Yu,Fp,Fu,Pp,Pq,Pv = EmptySystemMat (int(KF.nX0/2), KF.nY, KF.nP, KF.nU)
 
         # This below is problem specific
-        if nShapes_twr==1 and bThrustInStates:
-            Ya[0,0] = 1    # uddot                     = qddot[0]
-            Yv[1,1] = 1    # psidot                    = qdot[1]
-            Yp[2,2] = 1    # Direct feed-through of Mg
-            Fp[0,0] = 1    # T                         = p[0]
-            Fp[1,1] = 1    # dQ                        = p[1] -p[2]
-            Fp[1,2] = -1   # dQ                        = p[1] -p[2]
-            Yu[3,0] = 1    # pitch direct feedthrough
-        else:
-            raise NotImplementedError()
+#         Ya[0,0] = 1    # uddot                     = qddot[0]
+#         Yv[1,1] = 1    # psidot                    = qdot[1]
+#         Yp[2,2] = 1    # Direct feed-through of Mg
+#         Fp[0,0] = 1    # T                         = p[0]
+#         Fp[1,1] = 1    # dQ                        = p[1] -p[2]
+#         Fp[1,2] = -1   # dQ                        = p[1] -p[2]
+#         Yu[3,0] = 1    # pitch direct feedthrough
 
 
         # --- Mechanical system and turbine data
-        WT = FASTmodel2TNSB(FstFile , nShapes_twr=nShapes_twr,nShapes_bld=nShapes_bld, DEBUG=False, bStiffening=True, main_axis='z')
-#         nGear  = WT.ED['GBRatio']
-        if nShapes_twr==1:
-            # TODO aerodamping
-            WT.DD      = WT.DD*3.5 # increased damping to account for aero damping
+        WT2= FASTmodel2TNSB(FstFile , nShapes_twr=1,nShapes_bld=0, DEBUG=False, bStiffening=True, main_axis='z')
+        KF.WT2=WT2
+
+        WT  = FASTLinModel(FstFile, StateFile=StateFile, DEBUG=False)
         print(WT)
         KF.WT=WT
+        A,B,C,D,M = WT.A, WT.B, WT.C, WT.D, WT.M # To Shorten notations
 
         # --- Creating a wind speed estimator (reads tabulated aerodynamic data)
         KF.wse = TabulatedWSEstimator(fst_file=FstFile)
         KF.wse.load_files(base=base,suffix='')
         #print(wse)
-        # --- Building continuous and discrete state matrices
-        M,C,K = WT.MM, WT.DD, WT.KK
-        Xx,Xu,Yx,Yu = BuildSystem_Linear(M,C,K,Ya,Yv,Yq,Fp=Fp,Pp=Pp,Yp=Yp,Yu=Yu,Method='augmented_first_order')
-        KF.setMat(Xx,Xu,Yx,Yu)
+        # --- Build linear system
+        nX = len(sStates)+len(sAug)
+        nU = len(sInp   )
+        nY = len(sMeas  )
+        nq = len(sStates)
+        #
+        nGear = WT.nGear
+        Mqt      =  1/B.iloc[2,0]
+        J_LSSnG  = -1/B.iloc[3,1]  # This is JLSS * nGear (scaled by nGea since it takes Torque at HSS and return influences at LSS). It is not J_HSS !!
+
+        Mqt_ED   = M.iloc[0,0]
+        J_LSS_ED = M.iloc[1,1]
+        
+        Xx, Xu, Yx, Yu = EmptyStateMat(nX, nU, nY)
+        # --- Filling extended state matrices
+        if KF.bThrustInStates:
+            Xx[:nq,:nq ] = A.values
+            Xu[:nq,:nU ] = B.values[:,1:]
+            Yx[:  ,:nq ] = C.values
+            Yu[:  ,:   ] = D.values[:,1:]
+            Xx[nq-1,nq]    = 1/J_LSS_ED # ddpsi Qa # NOTE: LSS
+            Xx[:nq,nq+1]  =B.values[:,0]
+            Yx[:,5]       =D.values[:,0]
+            #  Value Hack
+#             Xx[2,0:4] =[ -6.132e+00,      0,   -5.730e-02,      0]
+#             Xx[2,5  ] =  2.285e-06  # Thrust
+#             Xx[3,4]   =  2.345e-08  # Torque
+            # Consistency
+            Yx[0,0:6] =Xx[2,0:6]  # <<<< Important
+            Xu[3,0]   =-Xx[3,4]*nGear
+        else:
+            Xx[:nq,:nq ] = A.values
+            Xu[:nq,:nU ] = B.values
+            Yx[:  ,:nq ] = C.values
+            Yu[:  ,:   ] = D.values
+            Xx[nq-1,nq]    = 1/J_LSS_ED # ddpsi Qa # NOTE: LSS
+            #  Value Hack
+#             Xx[2,0:4] =[ -6.132e+00,      0,   -5.730e-02,      0]
+#             Xu[2,0  ] =  2.285e-06  # Thrust
+#             Xx[3,4]   =  2.345e-08  # Torque
+            # Consistency
+            Yx[0,0:4] = Xx[2,0:4]
+            Yu[0,0]   = Xu[2,0]
+            Xu[3,1]   = -Xx[3,4]*nGear
+
+
+
+        KF.setMat(Xx, Xu, Yx, Yu)
 
 
 
@@ -91,10 +132,12 @@ class KalmanFilterTN(KalmanFilter):
         dt   = (time[-1] - time[0])/(len(time)-1)
         df['GenSpeed'] *= 2*np.pi/60 # converted to rad/s
         df['RotSpeed'] *= 2*np.pi/60 # converted to rad/s
-        df['GenTq']    *= 1000*nGear # Convert to rot torque
+        #df['GenTq']    *= 1000*nGear # Convert to rot torque
+        df['GenTq']    *= 1000 # HSS
         df['Azimuth']  *= np.pi/180  # rad
         df['RotTorq']  *= 1000 # [kNm]->[Nm]
         df['RotThrust']*= 1000 # [kN]->[N]
+        df['BldPitch1']*= np.pi/180 # [deg]->[rad]
         KF.df=df
 
         # --- 
@@ -122,6 +165,14 @@ class KalmanFilterTN(KalmanFilter):
     def timeLoop(KF):
         # --- Initial conditions
         x = KF.initFromClean()
+        WS_last     = KF.S_clean[KF.iS['WS'    ],0]
+        KF.S_hat[KF.iS['WS'    ], 0]= WS_last
+
+        if not KF.bThrustInStates:
+            Thrust_last = KF.S_clean[KF.iS['Thrust'],0]
+            KF.S_hat[KF.iS['Thrust'], 0]= Thrust_last
+        
+        KF.X_hat[:,0]   = x
         P = KF.P
 
         iY={lab: i   for i,lab in enumerate(KF.sY)}
@@ -131,31 +182,38 @@ class KalmanFilterTN(KalmanFilter):
 
             # --- KF predictions
             u=KF.U_clean[:,it]
+            if not KF.bThrustInStates:
+                u[0] = Thrust_last # (we don't know the thrust)
             x,P,_ = KF.estimateTimeStep(u,y,x,P,KF.Q,KF.R)
 
             # --- Estimate thrust and WS - Non generic code
-            WS0=x[KF.iX['WS']]
-            pitch     = y[KF.iY['pitch']]
+            pitch     = y[KF.iY['pitch']]*180/np.pi # deg
             Qaero_hat = x[KF.iX['Qaero']]
             omega     = x[KF.iX['omega']]
-            WS_hat = KF.wse.estimate(Qaero_hat, pitch, omega, WS0, relaxation = 0)
+            WS_hat = KF.wse.estimate(Qaero_hat, pitch, omega, WS_last, relaxation = 0)
             Thrust = KF.wse.Thrust(WS_hat, pitch, omega)
-            x[KF.iX['Thrust']] = Thrust
-            x[KF.iX['WS']]     = WS_hat
-            x[KF.iX['psi']]    = np.mod(x[KF.iX['psi']], 2*np.pi)
 
             # --- Store
-            KF.X_hat[:,it+1] = x
-            KF.Y_hat[:,it+1] = np.dot(KF.Yx,x) + np.dot(KF.Yu,u)
+            if KF.bThrustInStates:
+                x[KF.iX['Thrust']] = Thrust
+            else:
+                KF.S_hat[KF.iS['Thrust'], it+1]= Thrust
+            KF.S_hat[KF.iS['WS'    ], it+1]= WS_hat
+            x[KF.iX['psi']]    = np.mod(x[KF.iX['psi']], 2*np.pi)
+            KF.X_hat[:,it+1]   = x
+            KF.Y_hat[:,it+1]   = np.dot(KF.Yx,x) + np.dot(KF.Yu,u)
+            # --- Propagation to next time step
+            Thrust_last = Thrust
+            WS_last     = WS_hat
 
             if np.mod(it,500) == 0:
-                print('Time step %8.0f t=%10.3f  WS=%4.1f Thrust=%.1f' % (it,KF.time[it],x[7],x[4]))
+                print('Time step %8.0f t=%10.3f  WS=%4.1f Thrust=%.1f' % (it,KF.time[it],WS_hat,Thrust))
 
         KF.P = P
 
 
     def moments(KF):
-        WT=KF.WT
+        WT=KF.WT2
         z_test = fastlib.ED_TwrGag(WT.ED) - WT.ED['TowerBsHt']
         EI     = np.interp(z_test, WT.Twr.s_span, WT.Twr.EI[0,:])
         kappa  = np.interp(z_test, WT.Twr.s_span, WT.Twr.PhiK[0][0,:])
@@ -306,9 +364,9 @@ class KalmanFilterTN(KalmanFilter):
 
 
 
-def KalmanFilterTNSim(FstFile, MeasFile, OutputFile, base, bThrustInStates, nUnderSamp, tRange, bFilterAcc, nFilt, NoiseRFactor, sigX=None, sigY=None, bExport=False):
+def KalmanFilterTNLinSim(FstFile, MeasFile, OutputFile, base, bThrustInStates, StateFile, nUnderSamp, tRange, bFilterAcc, nFilt, NoiseRFactor, sigX=None, sigY=None, bExport=False):
     # ---
-    KF=KalmanFilterTN(FstFile, base,  bThrustInStates=bThrustInStates, nShapes_twr=1)
+    KF=KalmanFilterTNLin(FstFile, base, bThrustInStates, StateFile)
     print(KF)
     # --- Loading "Measurements"
     # Defining "clean" values 

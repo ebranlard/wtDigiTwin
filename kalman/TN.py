@@ -65,7 +65,6 @@ class KalmanFilterTN(KalmanFilter):
 
         # --- Mechanical system and turbine data
         WT = FASTmodel2TNSB(FstFile , nShapes_twr=nShapes_twr,nShapes_bld=nShapes_bld, DEBUG=False, bStiffening=True, main_axis='z')
-#         nGear  = WT.ED['GBRatio']
         if nShapes_twr==1:
             # TODO aerodamping
             WT.DD      = WT.DD*3.5 # increased damping to account for aero damping
@@ -75,7 +74,7 @@ class KalmanFilterTN(KalmanFilter):
         # --- Creating a wind speed estimator (reads tabulated aerodynamic data)
         KF.wse = TabulatedWSEstimator(fst_file=FstFile)
         KF.wse.load_files(base=base,suffix='')
-        #print(wse)
+        print(KF.wse)
         # --- Building continuous and discrete state matrices
         M,C,K = WT.MM, WT.DD, WT.KK
         Xx,Xu,Yx,Yu = BuildSystem_Linear(M,C,K,Ya,Yv,Yq,Fp=Fp,Pp=Pp,Yp=Yp,Yu=Yu,Method='augmented_first_order')
@@ -147,13 +146,16 @@ class KalmanFilterTN(KalmanFilter):
             x,P,_ = KF.estimateTimeStep(u,y,x,P,KF.Q,KF.R)
 
             # --- Estimate thrust and WS - Non generic code
-            WS0=x[KF.iX['WS']]
+            WS0       = x[KF.iX['WS']]
             pitch     = y[KF.iY['pitch']]
             Qaero_hat = x[KF.iX['Qaero']]
             omega     = x[KF.iX['omega']]
             WS_hat = KF.wse.estimate(Qaero_hat, pitch, omega, WS0, relaxation = 0)
+            Qaero_hat = np.max(Qaero_hat,0)
             Thrust = KF.wse.Thrust(WS_hat, pitch, omega)
-            x[KF.iX['Thrust']] = Thrust
+            GF = KF.WT.GF_lin(Thrust,x,bFull=True)
+
+            x[KF.iX['Thrust']] = GF
             x[KF.iX['WS']]     = WS_hat
             x[KF.iX['psi']]    = np.mod(x[KF.iX['psi']], 2*np.pi)
 
@@ -182,8 +184,9 @@ class KalmanFilterTN(KalmanFilter):
         M=np.column_stack([M]+[KF.X_hat  [j,:] for j,_ in enumerate(KF.sX)])
         M=np.column_stack([M]+[KF.Y      [j,:] for j,_ in enumerate(KF.sY)])
         M=np.column_stack([M]+[KF.Y_hat  [j,:] for j,_ in enumerate(KF.sY)])
-        M=np.column_stack([M]+[KF.S_clean[j,:] for j,_ in enumerate(KF.sS)])
-        M=np.column_stack([M]+[KF.S_hat  [j,:] for j,_ in enumerate(KF.sS)])
+        if len(KF.sS)>0:
+            M=np.column_stack([M]+[KF.S_clean[j,:] for j,_ in enumerate(KF.sS)])
+            M=np.column_stack([M]+[KF.S_hat  [j,:] for j,_ in enumerate(KF.sS)])
         M=np.column_stack([M]+KF.M_ref)
         M=np.column_stack([M]+KF.M_sim)
         header='time'+','
@@ -191,8 +194,9 @@ class KalmanFilterTN(KalmanFilter):
         header+=','.join([s+'_est' for s in KF.sX])+','
         header+=','.join([s+'_ref' for s in KF.sY])+','
         header+=','.join([s+'_est' for s in KF.sY])+','
-        header+=','.join([s+'_ref' for s in KF.sS])+','
-        header+=','.join([s+'_est' for s in KF.sS])+','
+        if len(KF.sS)>0:
+            header+=','.join([s+'_ref' for s in KF.sS])+','
+            header+=','.join([s+'_est' for s in KF.sS])+','
         header+=','.join(['My_ref{:d}'.format(j) for j,_ in enumerate(KF.M_ref)])+','
         header+=','.join(['My_est{:d}'.format(j) for j,_ in enumerate(KF.M_sim)])
         np.savetxt(OutputFile,M,delimiter=',',header=header)
@@ -216,9 +220,35 @@ class KalmanFilterTN(KalmanFilter):
             ax.set_xlabel('Frequency [Hz]')
             ax.set_yscale('log')
 
+        def mean_rel_err(t1,y1,t2,y2):
+            if len(y1)!=len(y2):
+                y2=np.interp(t1,t2,y2)
+            # Method 1 relative to mean
+            ref_val = np.mean(y1)
+            meanrelerr0=np.mean(np.abs(y1-y2)/ref_val)*100 
+            print('Mean rel error {:7.2f} %'.format( meanrelerr0))
+            # Method 2 scaling signals
+            Min=min(np.min(y1), np.min(y2))
+            Max=max(np.max(y1), np.max(y2))
+            y1=(y1-Min)/(Max-Min)+0.001
+            y2=(y2-Min)/(Max-Min)+0.001
+            meanrelerr=np.mean(np.abs(y1-y2)/np.abs(y1))*100 
+            print('Mean rel error {:7.2f} %'.format( meanrelerr))
+            return meanrelerr,meanrelerr0
+
         def time_plot(ax,t,ref,sim):
+            t=t[1:]
+            ref=ref[0:-1]
+            sim=sim[1:]
+
+            eps=mean_rel_err(t,ref,t,sim)[1]
+            sig_ref=np.std(ref)
+            sig_sim=np.std(sim)
             ax.plot(t,ref,'-' , color=COLRS[0])
             ax.plot(t,sim,'--', color=COLRS[1])
+            Ylim=ax.get_ylim()
+            Xlim=ax.get_xlim()
+            ax.text(Xlim[0],Ylim[0]+(Ylim[1]-Ylim[0])*0.8,r'$\epsilon=$'+r'{:.1f}%'.format(eps)+r' - $\sigma_\mathrm{est}/\sigma_\mathrm{ref} = $'+r'{:.3f}'.format(sig_sim/sig_ref), fontsize=11 )
 
         # Aliases to shorten notations
         iX, iY, iS = KF.iX, KF.iY, KF.iS
@@ -293,9 +323,9 @@ class KalmanFilterTN(KalmanFilter):
         import matplotlib.pyplot as plt
 
         z_test = list(fastlib.ED_TwrGag(KF.WT.ED) - KF.WT.ED['TowerBsHt'])
-        print(z_test)
+        print('z test:',z_test)
         n=len(z_test)
-        z_test.reverse()
+#         z_test.reverse()
         # --- Compare measurements
         cmap = matplotlib.cm.get_cmap('viridis')
         COLRS = [(cmap(v)[0],cmap(v)[1],cmap(v)[2]) for v in np.linspace(0,1,n+1)]

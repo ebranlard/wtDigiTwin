@@ -21,7 +21,8 @@ DEFAULT_COL_MAP={
   ' omega  ' : ' {RotSpeed_[rpm]} * 2*np.pi/60 ' , # [rpm] -> [rad/s]
   ' Thrust ' : ' RtAeroFxh_[N]                 ' ,
   ' Qaero  ' : ' RtAeroMxh_[N-m]               ' ,
-  ' Qgen   ' : ' {GenTq_[kN-m]}  *1000         ' , # [kNm] -> [Nm]
+#   ' Qgen   ' : ' {GenTq_[kN-m]}  *1000         ' , # [kNm] -> [Nm]
+  ' Qgen   ' : ' 97*{GenTq_[kN-m]}  *1000         ' , # [kNm] -> [Nm]
   ' WS     ' : ' RtVAvgxh_[m/s]                ' ,
   ' pitch  ' : ' {BldPitch1_[deg]} * np.pi/180 ' , # [deg]->[rad]
   ' TTacc  ' : ' NcIMUTAxs_[m/s^2]             ' 
@@ -37,10 +38,15 @@ class KalmanFilterTNLin(KalmanFilter):
         nDOF_2nd      = 2 # Mech DOFs     :  q = [u, psi]
         KF.bThrustInStates = bThrustInStates
         if bThrustInStates:
+#             sStates     = np.array(['ut1'  ,'psi'  ,'ut1dot','omega'] )
+#             sAug        = np.array(['Qaero','Thrust'])
+#             sMeas       = np.array(['TTacc','omega','Qgen','pitch'])
+#             sInp        = np.array(['Qgen','pitch'])
+#             sStor       = np.array(['WS'])
             sStates     = np.array(['ut1'  ,'psi'  ,'ut1dot','omega'] )
-            sAug        = np.array(['Qaero','Thrust'])
+            sAug        = np.array(['Thrust','Qaero','Qgen','WS'])
             sMeas       = np.array(['TTacc','omega','Qgen','pitch'])
-            sInp        = np.array(['Qgen','pitch'])
+            sInp        = np.array(['pitch'])
             sStor       = np.array(['WS'])
         else:
             sStates     = np.array(['ut1'  ,'psi'  ,'ut1dot','omega'] )
@@ -65,7 +71,8 @@ class KalmanFilterTNLin(KalmanFilter):
 
 
         # --- Mechanical system and turbine data
-        WT2= FASTmodel2TNSB(FstFile , nShapes_twr=1,nShapes_bld=0, DEBUG=False, bStiffening=True, main_axis='z')
+        WT2= FASTmodel2TNSB(FstFile , nShapes_twr=1,nShapes_bld=0, DEBUG=False, bStiffening=True, main_axis='z')    
+        #WT2.DD      = WT2.DD*3.5 # increased damping to account for aero damping
         KF.WT2=WT2
 
         WT  = FASTLinModel(FstFile, StateFile=StateFile, DEBUG=False)
@@ -76,7 +83,7 @@ class KalmanFilterTNLin(KalmanFilter):
         # --- Creating a wind speed estimator (reads tabulated aerodynamic data)
         KF.wse = TabulatedWSEstimator(fst_file=FstFile)
         KF.wse.load_files(base=base,suffix='')
-        #print(wse)
+        print(KF.wse)
         # --- Build linear system
         nX = len(sStates)+len(sAug)
         nU = len(sInp   )
@@ -94,19 +101,35 @@ class KalmanFilterTNLin(KalmanFilter):
         # --- Filling extended state matrices
         if KF.bThrustInStates:
             Xx[:nq,:nq ] = A.values
-            Xu[:nq,:nU ] = B.values[:,1:]
             Yx[:  ,:nq ] = C.values
-            Yu[:  ,:   ] = D.values[:,1:]
-            Xx[nq-1,nq]    = 1/J_LSS_ED # ddpsi Qa # NOTE: LSS
-            Xx[:nq,nq+1]  =B.values[:,0]
-            Yx[:,5]       =D.values[:,0]
+            #----
+            Xu[:nq,:nU ] = B.values[:,2:]
+            Yu[:  ,:   ] = D.values[:,2:]
+            Xx[2,4  ] =  2.285e-06  # Thrust
+            Xx[3,5]   =  2.345e-08  # Qa
+            Xx[3,6]   = -2.345e-08  # Qgen
+            Yx[2,6] = 1
+            Xx[2,0:4] =[ -6.132e+00,      0,   -5.730e-02,      0]
+#             # Consistency
+            Yx[0,0:7] =Xx[2,0:7]  # <<<< Important
+#             Xu[3,0]   =-Xx[3,4]*nGear
+            #----
+#             Xu[:nq,:nU ] = B.values[:,1:]
+#             Yu[:  ,:   ] = D.values[:,1:]
+#             Xx[nq-1,nq]    = 1/J_LSS_ED # ddpsi Qa # NOTE: LSS
+#             Xx[:nq,nq+1]  =B.values[:,0]
+#             Yx[:,5]       =D.values[:,0]
             #  Value Hack
+#             Xx[2,2]  *= 3.0 # Increased damping
 #             Xx[2,0:4] =[ -6.132e+00,      0,   -5.730e-02,      0]
 #             Xx[2,5  ] =  2.285e-06  # Thrust
 #             Xx[3,4]   =  2.345e-08  # Torque
-            # Consistency
-            Yx[0,0:6] =Xx[2,0:6]  # <<<< Important
-            Xu[3,0]   =-Xx[3,4]*nGear
+#             Xx[3,5  ] =  0
+#             Xu[2,0  ] =  0
+#             Yu[0,0  ] =  0
+#             # Consistency
+#             Yx[0,0:6] =Xx[2,0:6]  # <<<< Important
+#             Xu[3,0]   =-Xx[3,4]*nGear
         else:
             Xx[:nq,:nq ] = A.values
             Xu[:nq,:nU ] = B.values
@@ -185,30 +208,36 @@ class KalmanFilterTNLin(KalmanFilter):
             x,P,_ = KF.estimateTimeStep(u,y,x,P,KF.Q,KF.R)
 
             # --- Estimate thrust and WS - Non generic code
+#             WS_last=x[KF.iX['WS']]
             pitch     = y[KF.iY['pitch']]*180/np.pi # deg
             Qaero_hat = x[KF.iX['Qaero']]
             omega     = x[KF.iX['omega']]
             WS_hat = KF.wse.estimate(Qaero_hat, pitch, omega, WS_last, relaxation = 0)
+            #Qaero_hat = np.max(Qaero_hat,0)
             Thrust = KF.wse.Thrust(WS_hat, pitch, omega)
+
+            GF = Thrust
+            GF = KF.WT2.GF_lin(Thrust,x,bFull=True)
 
             # --- Store
             if KF.bThrustInStates:
-                x[KF.iX['Thrust']] = Thrust
+                #x[KF.iX['Thrust']] = Thrust
+                x[KF.iX['Thrust']] = GF
+                x[KF.iX['WS']] = WS_hat
             else:
-                KF.S_hat[KF.iS['Thrust'], it+1]= Thrust
+                KF.S_hat[KF.iS['Thrust'], it+1]= GF
             KF.S_hat[KF.iS['WS'    ], it+1]= WS_hat
             x[KF.iX['psi']]    = np.mod(x[KF.iX['psi']], 2*np.pi)
             KF.X_hat[:,it+1]   = x
             KF.Y_hat[:,it+1]   = np.dot(KF.Yx,x) + np.dot(KF.Yu,u)
             # --- Propagation to next time step
-            Thrust_last = Thrust
+            Thrust_last = GF
             WS_last     = WS_hat
 
             if np.mod(it,500) == 0:
                 print('Time step %8.0f t=%10.3f  WS=%4.1f Thrust=%.1f' % (it,KF.time[it],WS_hat,Thrust))
 
         KF.P = P
-
 
     def moments(KF):
         WT=KF.WT2
@@ -217,10 +246,16 @@ class KalmanFilterTNLin(KalmanFilter):
         kappa  = np.interp(z_test, WT.Twr.s_span, WT.Twr.PhiK[0][0,:])
         qx    = KF.X_hat[KF.iX['ut1']]
         KF.M_sim = [qx*EI[i]*kappa[i]/1000 for i in range(len(z_test))]                 # in [kNm]
-        try:
-            KF.M_ref = [KF.df['TwHt{:d}MLyt_[kN-m]'.format(i+1)].values for i in range(len(z_test)) ] # in [kNm]
-        except:
-            KF.M_ref = [KF.df['TwHt{:d}MLyt'.format(i+1)].values for i in range(len(z_test)) ] # in [kNm]
+        KF.M_ref=[]
+        for i in range(len(z_test)):
+            try:
+                val=KF.df['TwHt{:d}MLyt_[kN-m]'.format(i+1)].values
+            except:
+                try:
+                    val=KF.df['TwHt{:d}MLyt'.format(i+1)].values
+                except:
+                   val=KF.time*0
+            KF.M_ref.append(val)
         return KF.M_sim, KF.M_ref
 
     def export(KF,OutputFile):
@@ -228,8 +263,9 @@ class KalmanFilterTNLin(KalmanFilter):
         M=np.column_stack([M]+[KF.X_hat  [j,:] for j,_ in enumerate(KF.sX)])
         M=np.column_stack([M]+[KF.Y      [j,:] for j,_ in enumerate(KF.sY)])
         M=np.column_stack([M]+[KF.Y_hat  [j,:] for j,_ in enumerate(KF.sY)])
-        M=np.column_stack([M]+[KF.S_clean[j,:] for j,_ in enumerate(KF.sS)])
-        M=np.column_stack([M]+[KF.S_hat  [j,:] for j,_ in enumerate(KF.sS)])
+        if len(KF.sS)>0:
+           M=np.column_stack([M]+[KF.S_clean[j,:] for j,_ in enumerate(KF.sS)])
+           M=np.column_stack([M]+[KF.S_hat  [j,:] for j,_ in enumerate(KF.sS)])
         M=np.column_stack([M]+KF.M_ref)
         M=np.column_stack([M]+KF.M_sim)
         header='time'+','
@@ -237,8 +273,9 @@ class KalmanFilterTNLin(KalmanFilter):
         header+=','.join([s+'_est' for s in KF.sX])+','
         header+=','.join([s+'_ref' for s in KF.sY])+','
         header+=','.join([s+'_est' for s in KF.sY])+','
-        header+=','.join([s+'_ref' for s in KF.sS])+','
-        header+=','.join([s+'_est' for s in KF.sS])+','
+        if len(KF.sS)>0:
+            header+=','.join([s+'_ref' for s in KF.sS])+','
+            header+=','.join([s+'_est' for s in KF.sS])+','
         header+=','.join(['My_ref{:d}'.format(j) for j,_ in enumerate(KF.M_ref)])+','
         header+=','.join(['My_est{:d}'.format(j) for j,_ in enumerate(KF.M_sim)])
         np.savetxt(OutputFile,M,delimiter=',',header=header)
@@ -261,10 +298,36 @@ class KalmanFilterTNLin(KalmanFilter):
             ax.set_xlim([0,4])
             ax.set_xlabel('Frequency [Hz]')
             ax.set_yscale('log')
+            
+        def mean_rel_err(t1,y1,t2,y2):
+            if len(y1)!=len(y2):
+                y2=np.interp(t1,t2,y2)
+            # Method 1 relative to mean
+            ref_val = np.mean(y1)
+            meanrelerr0=np.mean(np.abs(y1-y2)/ref_val)*100 
+            print('Mean rel error {:7.2f} %'.format( meanrelerr0))
+            # Method 2 scaling signals
+            Min=min(np.min(y1), np.min(y2))
+            Max=max(np.max(y1), np.max(y2))
+            y1=(y1-Min)/(Max-Min)+0.001
+            y2=(y2-Min)/(Max-Min)+0.001
+            meanrelerr=np.mean(np.abs(y1-y2)/np.abs(y1))*100 
+            print('Mean rel error {:7.2f} %'.format( meanrelerr))
+            return meanrelerr,meanrelerr0
 
         def time_plot(ax,t,ref,sim):
+            t=t[1:]
+            ref=ref[0:-1]
+            sim=sim[1:]
+
+            eps=mean_rel_err(t,ref,t,sim)[1]
+            sig_ref=np.std(ref)
+            sig_sim=np.std(sim)
             ax.plot(t,ref,'-' , color=COLRS[0])
             ax.plot(t,sim,'--', color=COLRS[1])
+            Ylim=ax.get_ylim()
+            Xlim=ax.get_xlim()
+            ax.text(Xlim[0],Ylim[0]+(Ylim[1]-Ylim[0])*0.8,r'$\epsilon=$'+r'{:.1f}%'.format(eps)+r' - $\sigma_\mathrm{est}/\sigma_\mathrm{ref} = $'+r'{:.3f}'.format(sig_sim/sig_ref), fontsize=11 )
 
         # Aliases to shorten notations
         iX, iY, iS = KF.iX, KF.iY, KF.iS
@@ -325,6 +388,18 @@ class KalmanFilterTNLin(KalmanFilter):
         spec_plot(ax,time,X_clean[iX['ut1'],:], X_hat[iX['ut1'],:])
 
         #                
+#         z_test = list(fastlib.ED_TwrGag(KF.WT.ED) - KF.WT.ED['TowerBsHt'])
+#         try:
+#             for i,z in enumerate(z_test):
+#                 if np.mean(np.abs(KF.M_ref[i] ))>1:
+#                     ax=fig.add_subplot(6,2,11)
+#                     time_plot(ax,time,KF.M_ref[i], KF.M_sim[i])
+#                     ax.set_ylabel('My [kNm] - z={:.1f}'.format(z))
+#                     ax=fig.add_subplot(6,2,12)
+#                     spec_plot(ax,time,KF.M_ref[i], KF.M_sim[i])
+#                     break
+#         except:
+#             pass
         try:
             ax=fig.add_subplot(6,2,11)
             time_plot(ax,time,KF.M_ref[2], KF.M_sim[2])
@@ -333,15 +408,16 @@ class KalmanFilterTNLin(KalmanFilter):
             spec_plot(ax,time,KF.M_ref[2], KF.M_sim[2])
         except:
             pass
+#
         #                                         
     def plot_moments(KF,fig=None):
         import matplotlib
         import matplotlib.pyplot as plt
 
         z_test = list(fastlib.ED_TwrGag(KF.WT.ED) - KF.WT.ED['TowerBsHt'])
-        print(z_test)
+        print('z test:',z_test)
         n=len(z_test)
-        z_test.reverse()
+#         z_test.reverse()
         # --- Compare measurements
         cmap = matplotlib.cm.get_cmap('viridis')
         COLRS = [(cmap(v)[0],cmap(v)[1],cmap(v)[2]) for v in np.linspace(0,1,n+1)]

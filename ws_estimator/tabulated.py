@@ -32,7 +32,7 @@ def Paero(WS, Pitch, Omega, R, rho_air, fCP):
 def Qaero(WS, Pitch, Omega, R, rho_air, fCP):
     """ Qaero returns the aerodynamic torque
          - Omega [rad/s]
-         - pitch 
+         - pitch [deg]
          - R : the blade radius
          - fCP : an interpolant for CP(Pitch,lambda)
          - rho_air : the air density
@@ -94,6 +94,8 @@ class TabulatedWSEstimator():
             self.RtAeroMxh=self.Oper['RtAeroMxh_[kN-m]'].values*1000
             self.OmegaRated=np.max(self.Omega)
             self.OmegaLow  =0.4*self.OmegaRated
+            self.WSRated=np.interp(self.OmegaRated*0.98,self.Omega,self.WS)
+            self.WSCutOff=28
         else:
             self.Oper=None
 
@@ -117,19 +119,33 @@ class TabulatedWSEstimator():
 
 
     def estimate(self,Qaero_hat,pitch,omega, WS0, relaxation=0):
-        """ """
+        """
+         - omega [rad/s]
+         - pitch [deg]
+        """
         def estim(WS0,delta):
             z = lambda WS : abs(Qaero_hat - Qaero(WS,pitch, omega, self.R, self.rho_air, self.fCP))
             res = minimize_scalar(z,bounds=[max(0,WS0-delta),WS0+delta],method='bounded', options={'xatol': 1e-01, 'maxiter': 30})
             residual=Qaero_hat - Qaero(res.x,pitch, omega, self.R, self.rho_air, self.fCP)
             return res.x, residual
 
-        if omega<self.OmegaLow:
-            ws_guess=np.interp(omega,self.Omega,self.WS)
-            WS1,residual = estim(WS0,2)
-            WS=(4*WS1+ws_guess)/5
+
+        if omega<self.OmegaRated*0.95:
+            #  Below rated, we have the quasi steady ws as functin of omega as a best guess
+            ws_qs=np.interp(omega,self.Omega,self.WS)
+            if omega<self.OmegaLow:
+                WS1,residual = estim(WS0,2)
+                WS=(4*WS1+ws_qs)/5
+            else:
+                WS,residual = estim(WS0,1)
+
+            if np.abs(WS-ws_qs)>4:
+                WS1,residual = estim(ws_qs,2)
+                WS=(4*WS1+ws_qs)/5
         else:
+            # above omega rated, we are between WSrated-3 and WSCutoff
             WS,residual = estim(WS0,1)
+
         WS= WS0*relaxation + (1-relaxation)*WS
 
 #         if np.abs(residual)/Qaero_hat>0.1:

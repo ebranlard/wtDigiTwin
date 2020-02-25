@@ -136,26 +136,26 @@ class KalmanFilter(object):
         self.U_clean = np.zeros((self.nU,self.nt))
         self.S_clean = np.zeros((self.nS,self.nt))
         for i,lab in enumerate(self.sX):
-            if ColMap[lab] not in df.columns:
-                print('[WARN] Clean state not available      :', ColMap[lab])
-            else:
+            try:
                 self.X_clean[i,:]=df[ColMap[lab]]
+            except:
+                print('[WARN] Clean state not available      :', lab)
 
         for i,lab in enumerate(self.sY):
-            if ColMap[lab] not in df.columns:
-                print('[WARN] Clean measurement not available:', ColMap[lab])
-            else:
+            try:
                 self.Y_clean[i,:]=df[ColMap[lab]]
+            except:
+                print('[WARN] Clean measurement not available:', lab)
         for i,lab in enumerate(self.sU):
-            if ColMap[lab] not in df.columns:
-                print('[WARN] Clean output not available     :', ColMap[lab])
-            else:
+            try:
                 self.U_clean[i,:] =df[ColMap[lab]]
+            except:
+                print('[WARN] Clean output not available     :', lab)
         for i,lab in enumerate(self.sS):
-            if ColMap[lab] not in df.columns:
-                print('[WARN] Clean misc var not available   :', ColMap[lab])
-            else:
+            try:
                 self.S_clean[i,:] =df[ColMap[lab]]
+            except:
+                print('[WARN] Clean misc var not available   :', lab)
 
     def setY(self,df,ColMap=None):
         if ColMap is None:
@@ -213,8 +213,8 @@ class KalmanFilter(object):
         if NoiseRFactor is not None:
             Ey = np.sqrt(R)*NoiseRFactor
 
-        for it in range(0,self.nt-1):    
-            self.Y[:,it+1] = self.Y_clean[:,it] + np.dot(Ey,np.random.randn(self.nY,1)).ravel() + y_bias
+        for it in range(0,self.nt):    
+            self.Y[:,it] = self.Y_clean[:,it] + np.dot(Ey,np.random.randn(self.nY,1)).ravel() + y_bias
 
     def sigmasFromClean(self,factor=1):
         sigX   = dict()
@@ -274,6 +274,7 @@ class KalmanFilter(object):
             ax.plot(KF.time,KF.Y[j      ,:],'-.',  color=COLRS[2] ,label='Noisy')
             ax.plot(KF.time,KF.Y_hat[j  ,:],'--' , color=COLRS[1],label='Estimate')
             ax.set_ylabel(s)
+        ax.legend(fontsize=10)
         ax.set_title('Measurements Y')
 
     def plot_X(KF,fig=None):

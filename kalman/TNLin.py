@@ -30,45 +30,14 @@ DEFAULT_COL_MAP={
 
 
 class KalmanFilterTNLin(KalmanFilter):
-    def __init__(KF, FstFile, base, bThrustInStates, StateFile):
+    def __init__(KF, KM, FstFile, base, StateFile):
         """
 
         """
-        nShapes_bld   = 0 # Hard coded for TN
-        nDOF_2nd      = 2 # Mech DOFs     :  q = [u, psi]
-        KF.bThrustInStates = bThrustInStates
-        if bThrustInStates:
-#             sStates     = np.array(['ut1'  ,'psi'  ,'ut1dot','omega'] )
-#             sAug        = np.array(['Qaero','Thrust'])
-#             sMeas       = np.array(['TTacc','omega','Qgen','pitch'])
-#             sInp        = np.array(['Qgen','pitch'])
-#             sStor       = np.array(['WS'])
-            sStates     = np.array(['ut1'  ,'psi'  ,'ut1dot','omega'] )
-            sAug        = np.array(['Thrust','Qaero','Qgen','WS'])
-            sMeas       = np.array(['TTacc','omega','Qgen','pitch'])
-            sInp        = np.array(['pitch'])
-            sStor       = np.array(['WS'])
-        else:
-            sStates     = np.array(['ut1'  ,'psi'  ,'ut1dot','omega'] )
-            sAug        = np.array(['Qaero'])
-            sMeas       = np.array(['TTacc','omega','Qgen','pitch'])
-            sInp        = np.array(['Thrust','Qgen','pitch'])
-            sStor       = np.array(['Thrust','WS'])
-
-        super(KalmanFilterTNLin, KF).__init__(sX0=sStates, sXa=sAug, sU=sInp, sY=sMeas, sS=sStor)
-
-        # --- Building state/outputs connection matrices
-#         M,C,K,Ya,Yv,Yq,Yp,Yu,Fp,Fu,Pp,Pq,Pv = EmptySystemMat (int(KF.nX0/2), KF.nY, KF.nP, KF.nU)
-
-        # This below is problem specific
-#         Ya[0,0] = 1    # uddot                     = qddot[0]
-#         Yv[1,1] = 1    # psidot                    = qdot[1]
-#         Yp[2,2] = 1    # Direct feed-through of Mg
-#         Fp[0,0] = 1    # T                         = p[0]
-#         Fp[1,1] = 1    # dQ                        = p[1] -p[2]
-#         Fp[1,2] = -1   # dQ                        = p[1] -p[2]
-#         Yu[3,0] = 1    # pitch direct feedthrough
-
+        super(KalmanFilterTNLin, KF).__init__(sX0=KM.sStates, sXa=KM.sAug, sU=KM.sInp, sY=KM.sMeas, sS=KM.sStor)
+        iX = KF.iX
+        iY = KF.iY
+        iU = KF.iU
 
         # --- Mechanical system and turbine data
         WT2= FASTmodel2TNSB(FstFile , nShapes_twr=1,nShapes_bld=0, DEBUG=False, bStiffening=True, main_axis='z')    
@@ -85,10 +54,10 @@ class KalmanFilterTNLin(KalmanFilter):
         KF.wse.load_files(base=base,suffix='')
         print(KF.wse)
         # --- Build linear system
-        nX = len(sStates)+len(sAug)
-        nU = len(sInp   )
-        nY = len(sMeas  )
-        nq = len(sStates)
+        nX = len(KM.sStates)+len(KM.sAug)
+        nU = len(KM.sInp   )
+        nY = len(KM.sMeas  )
+        nq = len(KM.sStates)
         #
         nGear = WT.nGear
         Mqt      =  1/B.iloc[2,0]
@@ -99,26 +68,44 @@ class KalmanFilterTNLin(KalmanFilter):
         
         Xx, Xu, Yx, Yu = EmptyStateMat(nX, nU, nY)
         # --- Filling extended state matrices
-        if KF.bThrustInStates:
+
+
+        if KM.StateModel=='nt1_nx8': # sAug =  ['Thrust','Qaero','Qgen','WS']
             Xx[:nq,:nq ] = A.values
             Yx[:  ,:nq ] = C.values
             #----
             Xu[:nq,:nU ] = B.values[:,2:]
             Yu[:  ,:   ] = D.values[:,2:]
-            Xx[2,4  ] =  2.285e-06  # Thrust
-            Xx[3,5]   =  2.345e-08  # Qa
-            Xx[3,6]   = -2.345e-08  # Qgen
-            Yx[2,6] = 1
-            Xx[2,0:4] =[ -6.132e+00,      0,   -5.730e-02,      0]
-#             # Consistency
-            Yx[0,0:7] =Xx[2,0:7]  # <<<< Important
-#             Xu[3,0]   =-Xx[3,4]*nGear
             #----
-#             Xu[:nq,:nU ] = B.values[:,1:]
-#             Yu[:  ,:   ] = D.values[:,1:]
-#             Xx[nq-1,nq]    = 1/J_LSS_ED # ddpsi Qa # NOTE: LSS
-#             Xx[:nq,nq+1]  =B.values[:,0]
-#             Yx[:,5]       =D.values[:,0]
+            Xx[iX['omega'],iX['Qaero']] = 1/J_LSS_ED # ddpsi Qa # NOTE: LSS
+            Xx[:nq,iX['Thrust']]  = B.values[:,0]
+            Yx[:,  iX['Thrust']]  = D.values[:,0]
+            # --- Value Hack
+#             Xx[iX['ut1dot'], iX['Thrust']] =  2.285e-06  # Thrust
+#             Xx[iX['omega'],  iX['Qaero']]  =  2.345e-08  # Qa
+#             Xx[3,6]   = -2.345e-08  # Qgen
+#             Yx[2,6] = 1
+#             Xx[2,0:4] =[ -6.132e+00,      0,   -5.730e-02,      0]
+            # --- Consistency
+            Yx[0,0:7] =Xx[2,0:7]  # <<<< Important
+            if KM.Qgen_LSS:
+                Xu[3,0]   =-Xx[iX['omega'],iX['Qaero']]
+            else:
+                Xu[3,0]   =-Xx[iX['omega'],iX['Qaero']]*nGear
+
+        elif KM.StateModel=='nt1_nx7': # sAug = ['Thrust','Qaero','Qgen']
+            raise NotImplementedError()
+
+        elif KM.StateModel=='nt1_nx6': # sAug = ['Qaero','Thrust']
+            Xx[:nq,:nq ] = A.values
+            Yx[:  ,:nq ] = C.values
+            #----
+            Xu[:nq,:nU ] = B.values[:,1:]
+            Yu[:  ,:   ] = D.values[:,1:]
+            #----
+            Xx[iX['omega'],  iX['Qaero']] = 1/J_LSS_ED # ddpsi Qa # NOTE: LSS
+            Xx[:nq,nq+1]  =B.values[:,0]
+            Yx[:,5]       =D.values[:,0]
             #  Value Hack
 #             Xx[2,2]  *= 3.0 # Increased damping
 #             Xx[2,0:4] =[ -6.132e+00,      0,   -5.730e-02,      0]
@@ -127,10 +114,14 @@ class KalmanFilterTNLin(KalmanFilter):
 #             Xx[3,5  ] =  0
 #             Xu[2,0  ] =  0
 #             Yu[0,0  ] =  0
-#             # Consistency
-#             Yx[0,0:6] =Xx[2,0:6]  # <<<< Important
-#             Xu[3,0]   =-Xx[3,4]*nGear
-        else:
+            # Consistency
+            Yx[0,0:6] =Xx[2,0:6]  # <<<< Important
+            if KM.Qgen_LSS:
+                Xu[3,0]   =-Xx[iX['omega'],iX['Qaero']]*nGear
+            else:
+                Xu[3,0]   =-Xx[iX['omega'],iX['Qaero']]
+
+        elif KM.StateModel=='nt1_nx5':  # sAug = ['Qaero']
             Xx[:nq,:nq ] = A.values
             Xu[:nq,:nU ] = B.values
             Yx[:  ,:nq ] = C.values
@@ -143,7 +134,10 @@ class KalmanFilterTNLin(KalmanFilter):
             # Consistency
             Yx[0,0:4] = Xx[2,0:4]
             Yu[0,0]   = Xu[2,0]
-            Xu[3,1]   = -Xx[3,4]*nGear
+            if KM.Qgen_LSS:
+                Xu[3,1]   = -Xx[iX['omega'],iX['Qaero']]*nGear
+            else:
+                Xu[3,1]   = -Xx[iX['omega'],iX['Qaero']]
 
 
 
@@ -441,9 +435,9 @@ class KalmanFilterTNLin(KalmanFilter):
 
 
 
-def KalmanFilterTNLinSim(FstFile, MeasFile, OutputFile, base, bThrustInStates, StateFile, nUnderSamp, tRange, bFilterAcc, nFilt, NoiseRFactor, sigX=None, sigY=None, bExport=False, ColMap=DEFAULT_COL_MAP):
+def KalmanFilterTNLinSim(KM, FstFile, MeasFile, OutputFile, base, StateFile, nUnderSamp, tRange, bFilterAcc, nFilt, NoiseRFactor, sigX=None, sigY=None, bExport=False, ColMap=DEFAULT_COL_MAP):
     # ---
-    KF=KalmanFilterTNLin(FstFile, base, bThrustInStates, StateFile)
+    KF=KalmanFilterTNLin(KM, FstFile, base, StateFile)
     print(KF)
     # --- Loading "Measurements"
     # Defining "clean" values 

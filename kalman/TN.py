@@ -190,10 +190,10 @@ class KalmanFilterTN(KalmanFilter):
         M=np.column_stack([M]+KF.M_ref)
         M=np.column_stack([M]+KF.M_sim)
         header='time'+','
-        header+=','.join([s+'_ref' for s in KF.sX])+','
-        header+=','.join([s+'_est' for s in KF.sX])+','
-        header+=','.join([s+'_ref' for s in KF.sY])+','
-        header+=','.join([s+'_est' for s in KF.sY])+','
+        header+=','.join(['x_'+s+'_ref' for s in KF.sX])+','
+        header+=','.join(['x_'+s+'_est' for s in KF.sX])+','
+        header+=','.join(['y_'+s+'_ref' for s in KF.sY])+','
+        header+=','.join(['y_'+s+'_est' for s in KF.sY])+','
         if len(KF.sS)>0:
             header+=','.join([s+'_ref' for s in KF.sS])+','
             header+=','.join([s+'_est' for s in KF.sS])+','

@@ -68,9 +68,8 @@ class KalmanFilterTNLin(KalmanFilter):
         
         Xx, Xu, Yx, Yu = EmptyStateMat(nX, nU, nY)
         # --- Filling extended state matrices
-
-
-        if KM.StateModel=='nt1_nx8': # sAug =  ['Thrust','Qaero','Qgen','WS']
+        KF.KM = KM
+        if KM.StateModel=='nt1_nx8' or KM.StateModel=='nt1_nx7': # sAug =  ['Thrust','Qaero','Qgen','WS']
             Xx[:nq,:nq ] = A.values
             Yx[:  ,:nq ] = C.values
             #----
@@ -80,21 +79,20 @@ class KalmanFilterTNLin(KalmanFilter):
             Xx[iX['omega'],iX['Qaero']] = 1/J_LSS_ED # ddpsi Qa # NOTE: LSS
             Xx[:nq,iX['Thrust']]  = B.values[:,0]
             Yx[:,  iX['Thrust']]  = D.values[:,0]
+            Yx[iY['Qgen'],iX['Qgen']] = 1
             # --- Value Hack
 #             Xx[iX['ut1dot'], iX['Thrust']] =  2.285e-06  # Thrust
 #             Xx[iX['omega'],  iX['Qaero']]  =  2.345e-08  # Qa
-#             Xx[3,6]   = -2.345e-08  # Qgen
-#             Yx[2,6] = 1
 #             Xx[2,0:4] =[ -6.132e+00,      0,   -5.730e-02,      0]
+#             Xx[3,4  ] =  0
+#             Xu[3,0  ] =  0
             # --- Consistency
-            Yx[0,0:7] =Xx[2,0:7]  # <<<< Important
             if KM.Qgen_LSS:
-                Xu[3,0]   =-Xx[iX['omega'],iX['Qaero']]
+                Xx[iX['omega'],  iX['Qgen']]   =-Xx[iX['omega'],iX['Qaero']]
             else:
-                Xu[3,0]   =-Xx[iX['omega'],iX['Qaero']]*nGear
+                Xx[iX['omega'],  iX['Qgen']]   =-Xx[iX['omega'],iX['Qaero']]*nGear
+            Yx[0,0:] =Xx[2,0:]  # <<<< Important
 
-        elif KM.StateModel=='nt1_nx7': # sAug = ['Thrust','Qaero','Qgen']
-            raise NotImplementedError()
 
         elif KM.StateModel=='nt1_nx6': # sAug = ['Qaero','Thrust']
             Xx[:nq,:nq ] = A.values
@@ -104,40 +102,41 @@ class KalmanFilterTNLin(KalmanFilter):
             Yu[:  ,:   ] = D.values[:,1:]
             #----
             Xx[iX['omega'],  iX['Qaero']] = 1/J_LSS_ED # ddpsi Qa # NOTE: LSS
-            Xx[:nq,nq+1]  =B.values[:,0]
-            Yx[:,5]       =D.values[:,0]
+            Xx[:nq,iX['Thrust']] = B.values[:,0]
+            Yx[:,  iX['Thrust']] = D.values[:,0]
             #  Value Hack
-#             Xx[2,2]  *= 3.0 # Increased damping
 #             Xx[2,0:4] =[ -6.132e+00,      0,   -5.730e-02,      0]
-#             Xx[2,5  ] =  2.285e-06  # Thrust
-#             Xx[3,4]   =  2.345e-08  # Torque
-#             Xx[3,5  ] =  0
+#             Xx[2,iX['Thrust']] =  2.285e-06  # Thrust
+#             Xx[3,iX['Qaero' ]] =  2.345e-08  # Torque
+#             Xx[3,4  ] =  0
 #             Xu[2,0  ] =  0
 #             Yu[0,0  ] =  0
             # Consistency
-            Yx[0,0:6] =Xx[2,0:6]  # <<<< Important
             if KM.Qgen_LSS:
-                Xu[3,0]   =-Xx[iX['omega'],iX['Qaero']]*nGear
+                Xu[iX['omega'],iU['Qgen']]  =-Xx[iX['omega'],iX['Qaero']]
             else:
-                Xu[3,0]   =-Xx[iX['omega'],iX['Qaero']]
+                Xu[iX['omega'],iU['Qgen']]  =-Xx[iX['omega'],iX['Qaero']]*nGear
+            Yx[0,0:6] =Xx[2,0:6]  # <<<< Important
 
         elif KM.StateModel=='nt1_nx5':  # sAug = ['Qaero']
             Xx[:nq,:nq ] = A.values
-            Xu[:nq,:nU ] = B.values
             Yx[:  ,:nq ] = C.values
+            #----
+            Xu[:nq,:nU ] = B.values
             Yu[:  ,:   ] = D.values
-            Xx[nq-1,nq]    = 1/J_LSS_ED # ddpsi Qa # NOTE: LSS
+            #----
+            Xx[iX['omega'],  iX['Qaero']] = 1/J_LSS_ED # ddpsi Qa # NOTE: LSS
             #  Value Hack
 #             Xx[2,0:4] =[ -6.132e+00,      0,   -5.730e-02,      0]
 #             Xu[2,0  ] =  2.285e-06  # Thrust
 #             Xx[3,4]   =  2.345e-08  # Torque
             # Consistency
+            if KM.Qgen_LSS:
+                Xu[iX['omega'],iU['Qgen']]  =-Xx[iX['omega'],iX['Qaero']]
+            else:
+                Xu[iX['omega'],iU['Qgen']]  =-Xx[iX['omega'],iX['Qaero']]*nGear
             Yx[0,0:4] = Xx[2,0:4]
             Yu[0,0]   = Xu[2,0]
-            if KM.Qgen_LSS:
-                Xu[3,1]   = -Xx[iX['omega'],iX['Qaero']]*nGear
-            else:
-                Xu[3,1]   = -Xx[iX['omega'],iX['Qaero']]
 
 
 
@@ -183,7 +182,7 @@ class KalmanFilterTNLin(KalmanFilter):
         WS_last     = KF.S_clean[KF.iS['WS'    ],0]
         KF.S_hat[KF.iS['WS'    ], 0]= WS_last
 
-        if not KF.bThrustInStates:
+        if not KF.KM.bThrustInStates:
             Thrust_last = KF.S_clean[KF.iS['Thrust'],0]
             KF.S_hat[KF.iS['Thrust'], 0]= Thrust_last
         
@@ -197,29 +196,30 @@ class KalmanFilterTNLin(KalmanFilter):
 
             # --- KF predictions
             u=KF.U_clean[:,it]
-            if not KF.bThrustInStates:
+            if not KF.KM.bThrustInStates:
                 u[0] = Thrust_last # (we don't know the thrust)
             x,P,_ = KF.estimateTimeStep(u,y,x,P,KF.Q,KF.R)
 
             # --- Estimate thrust and WS - Non generic code
-#             WS_last=x[KF.iX['WS']]
+            if KF.KM.bWSInStates:
+                WS_last=x[KF.iX['WS']]
             pitch     = y[KF.iY['pitch']]*180/np.pi # deg
             Qaero_hat = x[KF.iX['Qaero']]
             omega     = x[KF.iX['omega']]
             WS_hat = KF.wse.estimate(Qaero_hat, pitch, omega, WS_last, relaxation = 0)
-            #Qaero_hat = np.max(Qaero_hat,0)
+            Qaero_hat = np.max(Qaero_hat,0)
             Thrust = KF.wse.Thrust(WS_hat, pitch, omega)
 
             GF = Thrust
             GF = KF.WT2.GF_lin(Thrust,x,bFull=True)
 
             # --- Store
-            if KF.bThrustInStates:
-                #x[KF.iX['Thrust']] = Thrust
+            if KF.KM.bThrustInStates:
                 x[KF.iX['Thrust']] = GF
-                x[KF.iX['WS']] = WS_hat
             else:
                 KF.S_hat[KF.iS['Thrust'], it+1]= GF
+            if KF.KM.bWSInStates:
+                x[KF.iX['WS']] = WS_hat
             KF.S_hat[KF.iS['WS'    ], it+1]= WS_hat
             x[KF.iX['psi']]    = np.mod(x[KF.iX['psi']], 2*np.pi)
             KF.X_hat[:,it+1]   = x
@@ -263,10 +263,10 @@ class KalmanFilterTNLin(KalmanFilter):
         M=np.column_stack([M]+KF.M_ref)
         M=np.column_stack([M]+KF.M_sim)
         header='time'+','
-        header+=','.join([s+'_ref' for s in KF.sX])+','
-        header+=','.join([s+'_est' for s in KF.sX])+','
-        header+=','.join([s+'_ref' for s in KF.sY])+','
-        header+=','.join([s+'_est' for s in KF.sY])+','
+        header+=','.join(['x_'+s+'_ref' for s in KF.sX])+','
+        header+=','.join(['x_'+s+'_est' for s in KF.sX])+','
+        header+=','.join(['y_'+s+'_ref' for s in KF.sY])+','
+        header+=','.join(['y_'+s+'_est' for s in KF.sY])+','
         if len(KF.sS)>0:
             header+=','.join([s+'_ref' for s in KF.sS])+','
             header+=','.join([s+'_est' for s in KF.sS])+','

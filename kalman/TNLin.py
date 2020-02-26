@@ -81,7 +81,7 @@ class KalmanFilterTNLin(KalmanFilter):
             Yx[:,  iX['Thrust']]  = D.values[:,0]
             Yx[iY['Qgen'],iX['Qgen']] = 1
             # --- Value Hack
-#             Xx[iX['ut1dot'], iX['Thrust']] =  2.285e-06  # Thrust
+            Xx[iX['ut1dot'], iX['Thrust']] =  2.285e-06  # Thrust
 #             Xx[iX['omega'],  iX['Qaero']]  =  2.345e-08  # Qa
 #             Xx[2,0:4] =[ -6.132e+00,      0,   -5.730e-02,      0]
 #             Xx[3,4  ] =  0
@@ -106,7 +106,7 @@ class KalmanFilterTNLin(KalmanFilter):
             Yx[:,  iX['Thrust']] = D.values[:,0]
             #  Value Hack
 #             Xx[2,0:4] =[ -6.132e+00,      0,   -5.730e-02,      0]
-#             Xx[2,iX['Thrust']] =  2.285e-06  # Thrust
+            Xx[2,iX['Thrust']] =  2.285e-06  # Thrust
 #             Xx[3,iX['Qaero' ]] =  2.345e-08  # Torque
 #             Xx[3,4  ] =  0
 #             Xu[2,0  ] =  0
@@ -128,7 +128,7 @@ class KalmanFilterTNLin(KalmanFilter):
             Xx[iX['omega'],  iX['Qaero']] = 1/J_LSS_ED # ddpsi Qa # NOTE: LSS
             #  Value Hack
 #             Xx[2,0:4] =[ -6.132e+00,      0,   -5.730e-02,      0]
-#             Xu[2,0  ] =  2.285e-06  # Thrust
+            Xu[2,0  ] =  2.285e-06  # Thrust
 #             Xx[3,4]   =  2.345e-08  # Torque
             # Consistency
             if KM.Qgen_LSS:
@@ -453,6 +453,7 @@ def KalmanFilterTNLinSim(KM, FstFile, MeasFile, OutputFile, base, StateFile, nUn
     KF.prepareMeasurements(NoiseRFactor=NoiseRFactor, bFilterAcc=bFilterAcc, nFilt=nFilt)
 
     # --- Time loop
+    print(OutputFile)
     KF.timeLoop()
     KF.moments()
 

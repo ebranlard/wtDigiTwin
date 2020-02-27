@@ -45,14 +45,12 @@ class KalmanFilterTNLin(KalmanFilter):
         KF.WT2=WT2
 
         WT  = FASTLinModel(FstFile, StateFile=StateFile, DEBUG=False)
-        print(WT)
         KF.WT=WT
         A,B,C,D,M = WT.A, WT.B, WT.C, WT.D, WT.M # To Shorten notations
 
         # --- Creating a wind speed estimator (reads tabulated aerodynamic data)
         KF.wse = TabulatedWSEstimator(fst_file=FstFile)
         KF.wse.load_files(base=base,suffix='')
-        print(KF.wse)
         # --- Build linear system
         nX = len(KM.sStates)+len(KM.sAug)
         nU = len(KM.sInp   )
@@ -81,7 +79,8 @@ class KalmanFilterTNLin(KalmanFilter):
             Yx[:,  iX['Thrust']]  = D.values[:,0]
             Yx[iY['Qgen'],iX['Qgen']] = 1
             # --- Value Hack
-            Xx[iX['ut1dot'], iX['Thrust']] =  2.285e-06  # Thrust
+            if KM.ThrustHack:
+                Xx[iX['ut1dot'], iX['Thrust']] =  2.285e-06  # Thrust
 #             Xx[iX['omega'],  iX['Qaero']]  =  2.345e-08  # Qa
 #             Xx[2,0:4] =[ -6.132e+00,      0,   -5.730e-02,      0]
 #             Xx[3,4  ] =  0
@@ -106,7 +105,8 @@ class KalmanFilterTNLin(KalmanFilter):
             Yx[:,  iX['Thrust']] = D.values[:,0]
             #  Value Hack
 #             Xx[2,0:4] =[ -6.132e+00,      0,   -5.730e-02,      0]
-            Xx[2,iX['Thrust']] =  2.285e-06  # Thrust
+            if KM.ThrustHack:
+                Xx[2,iX['Thrust']] =  2.285e-06  # Thrust
 #             Xx[3,iX['Qaero' ]] =  2.345e-08  # Torque
 #             Xx[3,4  ] =  0
 #             Xu[2,0  ] =  0
@@ -128,7 +128,8 @@ class KalmanFilterTNLin(KalmanFilter):
             Xx[iX['omega'],  iX['Qaero']] = 1/J_LSS_ED # ddpsi Qa # NOTE: LSS
             #  Value Hack
 #             Xx[2,0:4] =[ -6.132e+00,      0,   -5.730e-02,      0]
-            Xu[2,0  ] =  2.285e-06  # Thrust
+            if KM.ThrustHack:
+                Xu[2,0  ] =  2.285e-06  # Thrust
 #             Xx[3,4]   =  2.345e-08  # Torque
             # Consistency
             if KM.Qgen_LSS:
@@ -190,6 +191,11 @@ class KalmanFilterTNLin(KalmanFilter):
         P = KF.P
 
         iY={lab: i   for i,lab in enumerate(KF.sY)}
+
+
+        WSavg      = np.zeros((50,1))
+        WSavg[:]=WS_last
+
         for it in range(0,KF.nt-1):    
             # --- "Measurements"
             y  = KF.Y[:,it]
@@ -206,7 +212,7 @@ class KalmanFilterTNLin(KalmanFilter):
             pitch     = y[KF.iY['pitch']]*180/np.pi # deg
             Qaero_hat = x[KF.iX['Qaero']]
             omega     = x[KF.iX['omega']]
-            WS_hat = KF.wse.estimate(Qaero_hat, pitch, omega, WS_last, relaxation = 0)
+            WS_hat = KF.wse.estimate(Qaero_hat, pitch, omega, WS_last, relaxation = 0, WSavg=np.mean(WSavg))
             Qaero_hat = np.max(Qaero_hat,0)
             Thrust = KF.wse.Thrust(WS_hat, pitch, omega)
 
@@ -227,6 +233,8 @@ class KalmanFilterTNLin(KalmanFilter):
             # --- Propagation to next time step
             Thrust_last = GF
             WS_last     = WS_hat
+            WSavg[1:] = WSavg[0:-1]
+            WSavg[0]  = WS_hat
 
             if np.mod(it,500) == 0:
                 print('Time step %8.0f t=%10.3f  WS=%4.1f Thrust=%.1f' % (it,KF.time[it],WS_hat,Thrust))
@@ -404,7 +412,7 @@ class KalmanFilterTNLin(KalmanFilter):
             pass
 #
         #                                         
-    def plot_moments(KF,fig=None):
+    def plot_moments(KF,fig=None,scaleByMean=False):
         import matplotlib
         import matplotlib.pyplot as plt
 
@@ -420,8 +428,12 @@ class KalmanFilterTNLin(KalmanFilter):
         fig.set_size_inches(6.4,15.0,forward=True) # default is (6.4,4.8)
         for i,z in enumerate(z_test):
             ax = fig.add_subplot(n,1,i+1)
+            M_sim =KF.M_sim[i]
+            if scaleByMean:
+                M_sim+=-np.mean(KF.M_sim[i])+np.mean(KF.M_ref[i])
+            
             ax.plot (KF.time, KF.M_ref[i], 'k-', color='k',       label='Reference' , lw=1)
-            ax.plot (KF.time, KF.M_sim[i], '--', color=COLRS[i],label='Estimation', lw=0.8)
+            ax.plot (KF.time,    M_sim   , '--', color=COLRS[i],label='Estimation', lw=0.8)
             ax.set_ylabel('My z={:.1f}'.format(z))
             ax.tick_params(direction='in')
 #             if ii<2:
@@ -435,10 +447,13 @@ class KalmanFilterTNLin(KalmanFilter):
 
 
 
-def KalmanFilterTNLinSim(KM, FstFile, MeasFile, OutputFile, base, StateFile, nUnderSamp, tRange, bFilterAcc, nFilt, NoiseRFactor, sigX=None, sigY=None, bExport=False, ColMap=DEFAULT_COL_MAP):
+def KalmanFilterTNLinSim(KM, FstFile, MeasFile, OutputFile, base, StateFile, nUnderSamp, tRange, bFilterAcc, nFilt, NoiseRFactor, sigX=None, sigY=None, bExport=False, ColMap=DEFAULT_COL_MAP, debug=True):
     # ---
     KF=KalmanFilterTNLin(KM, FstFile, base, StateFile)
-    print(KF)
+    if debug:
+        print(KF.wse)
+        print(KF.WT)
+        print(KF)
     # --- Loading "Measurements"
     # Defining "clean" values 
     # Estimate sigmas from measurements
@@ -453,7 +468,8 @@ def KalmanFilterTNLinSim(KM, FstFile, MeasFile, OutputFile, base, StateFile, nUn
     KF.prepareMeasurements(NoiseRFactor=NoiseRFactor, bFilterAcc=bFilterAcc, nFilt=nFilt)
 
     # --- Time loop
-    print(OutputFile)
+    if debug:
+        print(OutputFile)
     KF.timeLoop()
     KF.moments()
 

@@ -118,52 +118,67 @@ class TabulatedWSEstimator():
         return Qaero(WS, Pitch, Omega, self.R, self.rho_air, self.fCP)
 
 
-    def estimate(self,Qaero_hat,pitch,omega, WS0, relaxation=0):
+    def estimate(self,Qaero_hat,pitch,omega, WS0, relaxation=0, WSavg=None): # TODO compute rolling average on the fly
         """
          - omega [rad/s]
          - pitch [deg]
         """
-        def estim(WS0,delta):
+        def estim(WS0,delta, maxiter=50, tol=0.1):
             z = lambda WS : abs(Qaero_hat - Qaero(WS,pitch, omega, self.R, self.rho_air, self.fCP))
-            res = minimize_scalar(z,bounds=[max(0,WS0-delta),WS0+delta],method='bounded', options={'xatol': 1e-01, 'maxiter': 30})
+            res = minimize_scalar(z,bounds=[max(1,WS0-delta),WS0+delta],method='bounded', options={'xatol': tol, 'maxiter': maxiter})
             residual=Qaero_hat - Qaero(res.x,pitch, omega, self.R, self.rho_air, self.fCP)
             return res.x, residual
 
-
-        if omega<self.OmegaRated*0.95:
-            #  Below rated, we have the quasi steady ws as functin of omega as a best guess
-            ws_qs=np.interp(omega,self.Omega,self.WS)
-            if omega<self.OmegaLow:
-                WS1,residual = estim(WS0,2)
-                WS=(4*WS1+ws_qs)/5
-            else:
-                WS,residual = estim(WS0,1)
-
-            if np.abs(WS-ws_qs)>4:
-                WS1,residual = estim(ws_qs,2)
-                WS=(4*WS1+ws_qs)/5
+#         if WSavg is not None:
+#             WS0=(WS0+WSavg)/2
+        if omega<self.OmegaLow:
+            ws_guess=np.interp(omega,self.Omega,self.WS)
+            WS1,residual = estim(WS0,2)
+            WS=(4*WS1+ws_guess)/5
         else:
-            # above omega rated, we are between WSrated-3 and WSCutoff
             WS,residual = estim(WS0,1)
-
         WS= WS0*relaxation + (1-relaxation)*WS
 
-#         if np.abs(residual)/Qaero_hat>0.1:
-#             print('NOT GOOD')
-# 
-#         if np.abs(residual-Qaero)
-# 
-#                 #ws_guess=np.interp(Qaero_hat,self.RtAeroMxh,self.WS)
-# 
-#                 z = lambda WS : abs(Qaero_hat - Qaero(WS,pitch, omega, self.R, self.rho_air, self.fCP))
-#                 res = minimize_scalar(z,bounds=[max(0,WS0-2),WS0+2],method='bounded', options={'xatol': 1e-01, 'maxiter': 30})
+#         if omega<self.OmegaRated*0.95:
+#             #  Below rated, we have the quasi steady ws as functin of omega as a best guess
+#             ws_qs=np.interp(omega,self.Omega,self.WS)
+#             if omega<self.OmegaLow:
+#                 WS1,residual = estim(WS0,3)
+#                 WS=(4*WS1+ws_qs)/5
 #             else:
+#                 WS,residual = estim(WS0,3)
 # 
-#                 z = lambda WS : abs(Qaero_hat - Qaero(WS,pitch, omega, self.R, self.rho_air, self.fCP))
-#                 res = minimize_scalar(z,bounds=[max(0,WS0-1),WS0+1],method='bounded', options={'xatol': 1e-01, 'maxiter': 30})
+#             if np.abs(WS-ws_qs)>4:
+#                 WS,residual = estim(ws_qs,3, maxiter=1000)
 # 
+#             if np.abs(residual)/Qaero_hat>0.1:
+#                 WS,residual = estim(ws_qs, 17, maxiter=1000)
+# 
+#             if np.abs(residual)/Qaero_hat>0.1:
+#                 WS,residual = estim(ws_qs+10, 10, maxiter=1000)
+# 
+#             if np.abs(residual)/Qaero_hat>0.1:
+#                 if WSavg is not None:
+#                     print('NOT GOOD 1 - WS={:.1f} WSqs={:.1f} WSavg={:.1f} - om={:.2f} pitch={:.2f}'.format(WS,ws_qs,WSavg,omega,pitch))
+#                 else:
+#                     print('NOT GOOD 1 - WS={:.1f} WSqs={:.1f} - om={:.2f} pitch={:.2f}'.format(WS,ws_qs,omega,pitch))
 #         else:
-#         print(residual)
+#             # above omega rated, we are between WSrated-3 and WSCutoff
+#             WS,residual = estim(WS0,3)
+#             if WS<self.WSRated:
+#                 WSmid=(self.WSCutOff+self.WSRated)/2
+#                 WS,residual = estim(WSmid, 16, maxiter=1000)
+# 
+# #                 if WSavg is not None:
+# #                     if np.abs(WS-WSavg)>4:
+# #                         WS,residual = estim(WSavg, 6, maxiter=1000)
+# 
+#             if np.abs(residual)/Qaero_hat>0.1:
+#                 print('NOT GOOD 2 - WS={:.1f} WS0={:.1f} - om={:.2f} pitch={:.2f}'.format(WS,WS0,omega,pitch))
+
+#         WS= WS0*relaxation + (1-relaxation)*WS
+
+
         return WS
 
 

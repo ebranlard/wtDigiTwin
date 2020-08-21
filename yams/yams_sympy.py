@@ -5,23 +5,60 @@ Reference:
 import numpy as np
 import sympy
 from sympy import Symbol
-from sympy import Matrix
+from sympy import Matrix, Function, diff
 from sympy.printing import lambdarepr
 from sympy import init_printing
 from sympy import lambdify
 from sympy.abc import *
 from sympy import trigsimp
 from sympy import cos,sin
+from sympy import zeros
+
+from sympy.physics.mechanics import Body as SympyBody
+from sympy.physics.mechanics import RigidBody as SympyRigidBody
+from sympy.physics.mechanics import Point, ReferenceFrame, inertia
+
 display=lambda x: sympy.pprint(x, use_unicode=False,wrap_line=False)
 
+# --------------------------------------------------------------------------------}
+# --- Helper functions 
+# --------------------------------------------------------------------------------{
 def colvec(v): 
     return Matrix([[v[0]],[v[1]],[v[2]]])
-
 def cross(V1,V2):
     return [V1[1]*V2[2]-V1[2]*V2[1], V1[2]*V2[0]-V1[0]*V2[2], (V1[0]*V2[1]-V1[1]*V2[0]) ]
 def eye(n): 
     return Matrix( np.eye(n).astype(int) )
 
+def ensureMat(x, nr, nc):
+    """ Ensures that the input is a matrix of shape nr, nc"""
+    if not isinstance(x,Matrix):
+        x=Matrix(x)
+    return x.reshape(nr, nc)
+
+def ensureList(x, nr):
+    """ Ensures that the input is a list of length nr"""
+    x = list(x)
+    if len(x)!=nr:
+        raise Exception('Wrong dimension, got {}, expected {}'.format(len(x),nr))
+    return x
+            
+def coord2vec(M31, e):
+    """ Ugly conversion from a matrix or vector coordinates (implicit frame) to a vector (in a given frame) """
+    M31 = ensureList(M31, 3)
+    return M31[0] * e.x + M31[1] * e.y + M31[2] * e.z
+
+            
+def skew(x):
+    """ Returns the skew symmetric matrix M, such that: cross(x,v) = M v """
+    #S = Matrix(np.zeros((3,3)).astype(int))
+    if hasattr(x,'shape') and len(x.shape)==2:
+        if x.shape[0]==3:
+            return Matrix(np.array([[0, -x[2,0], x[1,0]],[x[2,0],0,-x[0,0]],[-x[1,0],x[0,0],0]]))
+        else:
+            raise Exception('fSkew expect a vector of size 3 or matrix of size 3x1, got {}'.format(x.shape))
+    else:
+        return Matrix(np.array([[0, -x[2], x[1]],[x[2],0,-x[0]],[-x[1],x[0],0]]))
 
 
 # --------------------------------------------------------------------------------}
@@ -80,6 +117,174 @@ class Connection():
 # --------------------------------------------------------------------------------}
 # --- Bodies 
 # --------------------------------------------------------------------------------{
+class YAMSBody(SympyBody):
+    def __init__(self, name):
+        """
+           Origin point have no velocities in the body frame! 
+        """
+        self.frame     = ReferenceFrame('e_'+name)
+        self.origin    = Point('O_'+name)
+        self.masscenter= Point('G_'+name)
+        self.name=name
+        self.origin.set_vel(self.frame,0*self.frame.x)
+        
+        self.parent = None # Parent body, assuming a tree structure
+        
+    def ang_vel_in(self,frame_or_body):
+        """ Angular velocity of body wrt to another frame or body
+        This is just a wrapper for the ReferenceFrame ang_vel_in function
+        """
+        if isinstance(frame_or_body,ReferenceFrame):
+            return self.frame.ang_vel_in(frame_or_body)
+        else:
+            if issubclass(type(frame_or_body),YAMSBody):
+                return self.frame.ang_vel_in(frame_or_body.frame)
+            else:
+                raise Exception('Unknown class type, use ReferenceFrame of YAMSBody as argument')
+                
+    def connectTo(self,child,type='Rigid', rel_pos=None, rot_type='Body', rot_amounts=None, rot_order=None):
+        child.parent = self
+
+        if rel_pos is None or len(rel_pos)!=3:
+            raise Exception('rel_pos needs to be an array of size 3')
+
+        if type=='Free':
+            # --- "Free", "floating" connection
+            # Defining relative position and velocity of child wrt self
+            pos = 0 * self.frame.x
+            vel = 0 * self.frame.x
+            for d,e in zip(rel_pos[0:3], (self.frame.x, self.frame.y, self.frame.z)):
+                if d is not None:
+                    pos += d * e
+                    if isinstance(d, Function):
+                        vel += diff(d) * e
+            child.origin.set_pos(self.origin, pos)
+            child.origin.set_vel(self.frame,  vel);
+            # Orientation
+            if rot_amounts is None:
+                child.frame.orient(self.frame, 'Axis', (0, self.frame.x))
+            else:
+                child.frame.orient(self.frame, rot_type, rot_amounts, rot_order) # <<< 
+            #
+            # >>>> TODO Express origin and mass center as function of other frames
+    #        child.masscenter.v2pt_theory(child.origin, self.frame , child.frame); # GN & T are fixed in e_T
+    #        child.masscenter.v2pt_theory(child.origin, ref.frame, child.frame); # GN & T are fixed in e_T
+
+        elif type=='Rigid':
+            # Defining relative position and velocity of child wrt self
+            pos = 0 * self.frame.x
+            vel = 0 * self.frame.x
+            for d,e in zip(rel_pos[0:3], (self.frame.x, self.frame.y, self.frame.z)):
+                if d is not None:
+                    pos += d * e
+                    if isinstance(d, Function):
+                        raise Exception('Position variable cannot be a dynamic variable for a rigid connection: variable {}'.format(d))
+            child.origin.set_pos(self.origin, pos)
+            child.origin.set_vel(self.frame,  vel);
+            # Orientation (creating a path connecting frames together)
+            if rot_amounts is None:
+                child.frame.orient(self.frame, 'Axis', (0, self.frame.x) ) 
+            else:
+                if rot_type=='Axis':
+                    child.frame.orient(self.frame, rot_type, rot_amounts) # <<< 
+                else:
+                    child.frame.orient(self.frame, rot_type, rot_amounts, rot_order) # <<< 
+
+        elif type=='Joint':
+            # Defining relative position and velocity of child wrt self
+            pos = 0 * self.frame.x
+            vel = 0 * self.frame.x
+            for d,e in zip(rel_pos[0:3], (self.frame.x, self.frame.y, self.frame.z)):
+                if d is not None:
+                    pos += d * e
+                    if isinstance(d, Function):
+                        raise Exception('Position variable cannot be a dynamic variable for a joint connection, variable: {}'.format(d))
+            child.origin.set_pos(self.origin, pos)
+            child.origin.set_vel(self.frame,  vel);
+            #  Orientation
+            if rot_amounts is None:
+                raise Exception('rot_amounts needs to be provided with Joint connection')
+            for d in rot_amounts:
+                if d!=0 and not isinstance(d, Function):
+                    raise Exception('Rotation amount variable should be a dynamic variable for a joint connection, variable: {}'.format(d))
+            child.frame.orient(self.frame, rot_type, rot_amounts, rot_order) # <<< 
+        else:
+            raise Exception('Unsupported joint type: {}'.format(type))
+
+    # --------------------------------------------------------------------------------}
+    # --- Visualization 
+    # --------------------------------------------------------------------------------{
+    
+    def vizOrigin(self, radius=1.0, color='black', format='pydy'):
+        if format=='pydy':
+            from pydy.viz.shapes import Sphere
+            from pydy.viz.visualization_frame import VisualizationFrame
+            return VisualizationFrame(self.frame, self.origin, Sphere(color=color, radius=radius))
+
+    def vizCOG(self, radius=1.0, color='red', format='pydy'):
+        if format=='pydy':
+            from pydy.viz.shapes import Sphere
+            from pydy.viz.visualization_frame import VisualizationFrame
+            return VisualizationFrame(self.frame, self.masscenter, Sphere(color=color, radius=radius))
+
+    def vizFrame(self, radius=0.1, length=1.0, format='pydy'):
+        if format=='pydy':
+            from pydy.viz.shapes import Cylinder
+            from pydy.viz.visualization_frame import VisualizationFrame
+            from sympy.physics.mechanics import Point
+            X_frame  = self.frame.orientnew('ffx', 'Axis', (-np.pi/2, self.frame.z) ) # Make y be x
+            Z_frame  = self.frame.orientnew('ffz', 'Axis', (+np.pi/2, self.frame.x) ) # Make y be z
+            X_shape   = Cylinder(radius=radius, length=length, color='red') # Cylinder are along y
+            Y_shape   = Cylinder(radius=radius, length=length, color='green')
+            Z_shape   = Cylinder(radius=radius, length=length, color='blue')
+            X_center=Point('X'); X_center.set_pos(self.origin, length/2 * X_frame.y)
+            Y_center=Point('Y'); Y_center.set_pos(self.origin, length/2 * self.frame.y)
+            Z_center=Point('Z'); Z_center.set_pos(self.origin, length/2 * Z_frame.y)
+            X_viz_frame = VisualizationFrame(X_frame, X_center, X_shape)
+            Y_viz_frame = VisualizationFrame(self.frame, Y_center, Y_shape)
+            Z_viz_frame = VisualizationFrame(Z_frame, Z_center, Z_shape)
+        return X_viz_frame, Y_viz_frame, Z_viz_frame
+
+    def vizAsCylinder(self, radius, length, axis='z', color='blue', offset=0, format='pydy'):
+        """ """
+        if format=='pydy':
+            # pydy cylinder is along y and centered at the middle of the cylinder
+            from pydy.viz.shapes import Cylinder
+            from pydy.viz.visualization_frame import VisualizationFrame
+            if axis=='y':
+                e = self.frame
+                a = self.frame.y
+            elif axis=='z':
+                e = self.frame.orientnew('CF_'+self.name, 'Axis', (np.pi/2, self.frame.x) ) 
+                a = self.frame.z
+            elif axis=='x':
+                e = self.frame.orientnew('CF_'+self.name, 'Axis', (np.pi/2, self.frame.z) ) 
+                a = self.frame.x
+
+            shape = Cylinder(radius=radius, length=length, color=color)
+            center=Point('CC_'+self.name); center.set_pos(self.origin, (length/2 +offset) * a)
+            return VisualizationFrame(e, center, shape)
+        else:
+            raise NotImplementedError()
+
+
+    def vizAsRotor(self, radius=0.1, length=1, nB=3,  axis='x', color='white', format='pydy'):
+        # --- Bodies visualization
+        if format=='pydy':
+            from pydy.viz.shapes import Cylinder
+            from pydy.viz.visualization_frame import VisualizationFrame
+            blade_shape = Cylinder(radius=radius, length=length, color=color)
+            viz=[]
+            if axis=='x':
+                for iB in np.arange(nB):
+                    frame  = self.frame.orientnew('b', 'Axis', (-np.pi/2+(iB-1)*2*np.pi/nB , self.frame.x) ) # Y pointing along blade
+                    center=Point('RB'); 
+                    center.set_pos(self.origin, length/2 * frame.y)
+                    viz.append( VisualizationFrame(frame, center, blade_shape) )
+                return viz
+            else:
+                raise NotImplementedError()
+            
 class Body(object):
     def __init__(B,Name=''):
         B.Children    = []
@@ -207,8 +412,22 @@ class Body(object):
 
 
 # --------------------------------------------------------------------------------}
-# --- Ground Body 
+# --- Ground/inertial Body 
 # --------------------------------------------------------------------------------{
+class YAMSInertialBody(YAMSBody):
+    """ Inertial body / ground/ earth 
+    Typically only one used
+    """
+    def __init__(self, name='E'): # "Earth"
+        YAMSBody.__init__(self,name)
+    
+    def __repr__(self):
+        s='<YAMS InertialBody object "{}" with attributes:>\n'.format(self.name)
+        s+=' - origin:       {}\n'.format(self.origin)
+        s+=' - frame:        {}\n'.format(self.frame)
+        s+=' - masscenter:   {}\n'.format(self.masscenter)
+        return s
+
 class GroundBody(Body):
     def __init__(B):
         super(GroundBody,B).__init__('Grd')
@@ -217,6 +436,103 @@ class GroundBody(Body):
 # --------------------------------------------------------------------------------}
 # --- Rigid Body 
 # --------------------------------------------------------------------------------{
+class YAMSRigidBody(YAMSBody,SympyRigidBody):
+    def __init__(self, name, mass=None, J_G=None, rho_G=None, J_diag=False):
+        """
+        Define a rigid body and introduce symbols for convenience.
+        
+           Origin point have no velocities in the body frame! 
+            
+        
+        INPUTS:
+            name: string (can be one character), make sure this string is unique between all bodies
+        
+        OPTIONAL INPUTS:
+            mass : scalar, body mass
+            J_G  : 3x3 array or 3-array defining the coordinates of the inertia tensor in the body frame at the COG
+            rho_G: array-like of length 3 defining the coordinates of the COG in the body frame
+            J_diag: if true, the inertial tensor J_G is initialized as diagonal
+        
+        
+        """
+        # YAMS Body creates a default "origin", "masscenter", and "frame"
+        YAMSBody.__init__(self, name)
+        
+        # --- Mass
+        if mass is None:
+            mass=Symbol('M_'+name)
+        
+        # --- Inertia, creating a dyadic using our frame and G
+        if J_G is not None:
+            if len(list(J_G))==3:
+                ixx=J_G[0]
+                iyy=J_G[1]
+                izz=J_G[2]
+                ixy, iyz, izx =0,0,0
+            else:
+                J_G = ensureMat(J_G, 3, 3)
+                ixx = J_G[0,0]
+                iyy = J_G[1,1]
+                izz = J_G[2,2]
+                izx = J_G[2,0]
+                ixy = J_G[0,1]
+                iyz = J_G[1,2]
+        else:
+            ixx = Symbol('J_xx_'+name)
+            iyy = Symbol('J_yy_'+name)
+            izz = Symbol('J_zz_'+name)
+            izx = Symbol('J_zx_'+name)
+            ixy = Symbol('J_xy_'+name)
+            iyz = Symbol('J_yz_'+name)
+        if J_diag:
+            ixy, iyz, izx =0,0,0
+            
+        #inertia: dyadic : (inertia(frame, *list), point)
+        _inertia = (inertia(self.frame, ixx, iyy, izz, ixy, iyz, izx), self.masscenter)
+            
+        # --- Position of COG in body frame
+        if rho_G is None: 
+            rho_G=symbols('x_G_'+name+ ', y_G_'+name+ ', z_G_'+name)
+        self.setGcoord(rho_G)
+            
+        # Init Sympy Rigid Body 
+        SympyRigidBody.__init__(self, name, self.masscenter, self.frame, mass, _inertia)
+            
+    def inertiaIsInPrincipalAxes(self):
+        """ enforce the fact that the frame is along the principal axes"""
+        D=self._inertia.to_matrix(self.frame)
+        self.inertia=(inertia(self.frame, D[0,0], D[1,1], D[2,2]), self._inertia_point)
+            
+    def setGcoord(self, rho_G):
+        """
+        INPUTS:
+            rho_G: array-like of length 3 defining the coordinates of the COG in the body frame
+        """
+        rho_G = ensureList(rho_G,3)
+        self.s_G_inB = rho_G[0]*self.frame.x + rho_G[1]*self.frame.y+ rho_G[2]*self.frame.z # coordinates of 
+        
+        self.masscenter.set_pos(self.origin, self.s_G_inB)
+        
+    @property    
+    def origin_inertia(self):
+        return self.parallel_axis(self.origin)
+    
+    @property    
+    def inertia_matrix(self):
+        """ Returns inertia matrix in body frame"""
+        return self.inertia[0].to_matrix(self.frame)
+    
+    def __repr__(self):
+        s='<YAMS RigidBody object "{}" with attributes:>\n'.format(self.name)
+        s+=' - origin:       {}\n'.format(self.origin)
+        s+=' - frame:        {}\n'.format(self.frame)
+        s+=' - mass:         {}\n'.format(self.mass)
+        s+=' - inertia:      {}\n'.format(self.inertia[0].to_matrix(self.frame))
+        s+='   (defined at point {})\n'.format(self.inertia[1])
+        s+=' - masscenter:   {}\n'.format(self.masscenter)
+        s+='   (position from origin: {})\n'.format(self.masscenter.pos_from(self.origin))
+        return s
+        
 class RigidBody(Body):
     def __init__(B, Name, Mass, J_G, rho_G):
         """

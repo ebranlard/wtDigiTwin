@@ -201,7 +201,7 @@ class MechSystem():
             raise NotImplementedError('Please specify a time series of force first')
 
 
-    def integrate(self,t_eval, method='RK4', y0=None, **options):
+    def integrate(self,t_eval, method='RK45', y0=None, **options):
         #
         if y0 is not None:
             self.setStateInitialConditions(y0)

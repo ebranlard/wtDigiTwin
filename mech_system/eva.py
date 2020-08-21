@@ -16,8 +16,11 @@ def eig(K,M):
         modalmass_j = np.dot(q_j.T,M).dot(q_j)
         Q[:,j]= Q[:,j]/np.sqrt(modalmass_j)
     Lambda=np.dot(Q.T,K).dot(Q)
-    Lambda = np.diag(np.diag(Lambda)) # enforcng it to be diagonal
-    # TODO add the functionality to sort the values
+    lambdaDiag=np.diag(Lambda) # Note lambda might have off diganoal values due to numerics
+    I = np.argsort(lambdaDiag)
+    # Sorting eigen values
+    Q=Q[:,I]
+    Lambda = np.diag(lambdaDiag[I]) # enforcing purely diagonal
     return Q,Lambda
 
 def eigMCK(M,C,K, method='diag_beta'): 

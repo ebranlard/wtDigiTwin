@@ -4,21 +4,30 @@ Reference:
 """
 import numpy as np
 import sympy
-from sympy import Symbol
+from sympy import Symbol, symbols
 from sympy import Matrix, Function, diff
 from sympy.printing import lambdarepr
 from sympy import init_printing
 from sympy import lambdify
-from sympy.abc import *
+#from sympy.abc import *
 from sympy import trigsimp
 from sympy import cos,sin
 from sympy import zeros
 
 from sympy.physics.mechanics import Body as SympyBody
 from sympy.physics.mechanics import RigidBody as SympyRigidBody
-from sympy.physics.mechanics import Point, ReferenceFrame, inertia
+from sympy.physics.mechanics import Point, ReferenceFrame, inertia, dynamicsymbols
+from sympy.physics.mechanics.functions import msubs
+
+from sympy.physics.vector import init_vprinting, vlatex
+init_vprinting(use_latex='mathjax', pretty_print=False)
 
 display=lambda x: sympy.pprint(x, use_unicode=False,wrap_line=False)
+
+__all__ = ['YAMSBody','YAMSInertialBody','YAMSRigidBody','YAMSFlexibleBody']
+__all__+= ['Body','RigidBody','GroundBody'] # Old implementation
+__all__+= ['skew', 'rotToDCM', 'DCMtoOmega']
+__all__+= ['kane_frstar','kane_fr','kane_fr_alt','kane_frstar_alt']
 
 # --------------------------------------------------------------------------------}
 # --- Helper functions 
@@ -60,7 +69,107 @@ def skew(x):
     else:
         return Matrix(np.array([[0, -x[2], x[1]],[x[2],0,-x[0]],[-x[1],x[0],0]]))
 
+def rotToDCM(rot_type, rot_amounts, rot_order=None):
+    """
+    return matrix from a ref_frame to another frame rotated by specified amounts
+    
+    New type added: SmallRot
+    
+    see sympy.orientnew
+        rotToDCM(frame, 'Axis', (3, N.x)       )
+        rotToDCM(frame, 'Body', (x,y,z), 'XYZ' )
+        rotToDCM(frame, 'DCM' , M )
+        rotToDCM(frame, 'SmallRot' , (x,y,z) )
+    """
+    ref_frame = ReferenceFrame('dummyref')
+    if rot_type =='SmallRot':
+            M=-skew(rot_amounts)
+            M[0,0]=1
+            M[1,1]=1
+            M[2,2]=1
+            return M
+    elif rot_type in ['Body','Space']:
+        frame = ref_frame.orientnew('dummy', rot_type, rot_amounts, rot_order)
+    else:
+        frame = ref_frame.orientnew('dummy', rot_type, rot_amounts)
+    return frame.dcm(ref_frame) # from parent to frame
+    
+def DCMtoOmega(DCM, ref_frame=None):
+    """
+    Given a DCM matrix, returns the rotational velocity: omega = R' * R^t
 
+        DCM = ref_frame.dcm(body.frame) # from body to inertial
+           -> Omega of body wrt ref_frame expressed in ref frame
+
+    If ref_frame is None, only the coordinates of omega are given 
+    otherwise, a vector is returned, expressed in ref_frame
+
+    """
+    t = dynamicsymbols._t
+    OmSkew = (DCM.diff(t) *  DCM.transpose()).simplify()
+    if ref_frame is None:
+        return (OmSkew[2,1], OmSkew[0,2], OmSkew[1,0])
+    else:
+        return OmSkew[2,1] * ref_frame.x + OmSkew[0,2]*ref_frame.y + OmSkew[1,0] * ref_frame.z
+
+
+# --------------------------------------------------------------------------------}
+# ---  
+# --------------------------------------------------------------------------------{
+class Taylor(object):
+    """ 
+    A Taylor object contains a Taylor expansion of a variable as function of q
+        M = M^0 + \sum_j=1^nq M^1_j q_j
+    where M, M^0, M^1_j are matrices of dimension nr x nc
+    See Wallrapp 1993/1994
+    """
+    def __init__(self, bodyname, varname, nr, nc, nq, rname=None, cname=None, q=None, order=2):
+        if rname is None:
+            rname=list(np.arange(nr)+1)
+        if cname is None:
+            cname=list(np.arange(nr)+1)
+        if len(cname)!=nc:
+            raise Exception('cname length should match nc for Taylor {} {}'.format(bodyname, varname))
+        if len(rname)!=nr:
+            raise Exception('rname length should match nr for Taylor {} {}'.format(bodyname, varname))
+            
+        self.varname=varname
+        self.bodyname=bodyname
+            
+        self.M0=Matrix(np.zeros((nr,nc)).astype(int))
+        for i in np.arange(nr):
+            for j in np.arange(nc):
+                self.M0[i,j] = symbols('{}^0_{}_{}{}'.format(varname,bodyname,rname[i],cname[j])) 
+                
+        if order==2: 
+            self.M1=[]
+            for k in np.arange(nq):
+                self.M1.append(Matrix(np.zeros((nr,nc)).astype(int)))
+                for i in np.arange(nr):
+                    for j in np.arange(nc):
+                        self.M1[k][i,j] = symbols('{}^1_{}_{}_{}{}'.format(varname,k+1,bodyname,rname[i],cname[j])) 
+    def eval(self, q):
+        M = self.M0
+        if hasattr(self,'M1'): 
+            nq = len(self.M1)
+            if len(q)!=nq:
+                raise Exception('Inconsistent dimension between q ({}) and M1 ({}) for Taylor {} {}'.format(len(q),nq,self.bodyname, self.varname))
+            for k in np.arange(nq):
+                M +=self.M1[k]*q[k]
+        return M
+    
+    def setOrder(self,order):
+        if order==1:
+            if hasattr(self,'M1'): 
+                del self.M1
+        else:
+            raise Exception('set order for now mainly removes the 2nd order term')
+
+#Me = Taylor('T','Me', 3, 3, nq=2, rname='xyz', cname='xyz')
+#Me.M1
+#Me.eval([x,y])
+#Md = Taylor('T','M_d', 3, 1, nq=2, rname='xyz', cname=[''])
+#skew(Md.M0)
 # --------------------------------------------------------------------------------}
 # --- Connections 
 # --------------------------------------------------------------------------------{
@@ -113,11 +222,19 @@ class Connection():
                 R      = np.dot(R , Rj )
                 j.R_ci = Matrix(np.dot(R, j.R_ci_0 ))
 
+def exprHasFunction(expr):
+    """ return True if a sympy expression contains a function"""
+    if hasattr(expr, 'atoms'): 
+        return len(expr.atoms(Function))>0
+    else:
+        return False
+
+
 
 # --------------------------------------------------------------------------------}
 # --- Bodies 
 # --------------------------------------------------------------------------------{
-class YAMSBody(SympyBody):
+class YAMSBody(object):
     def __init__(self, name):
         """
            Origin point have no velocities in the body frame! 
@@ -129,6 +246,15 @@ class YAMSBody(SympyBody):
         self.origin.set_vel(self.frame,0*self.frame.x)
         
         self.parent = None # Parent body, assuming a tree structure
+        self.children = [] # children bodies
+        self.inertial_frame = None # storing the typical inertial frame use for computation
+        self.inertial_origin = None # storing the typical inertial frame use for computation
+
+    def __repr__(self):
+        s='<{} object "{}" with attributes:>\n'.format(type(self).__name__,self.name)
+        s+=' - origin:       {}\n'.format(self.origin)
+        s+=' - frame:        {}\n'.format(self.frame)
+        return s
         
     def ang_vel_in(self,frame_or_body):
         """ Angular velocity of body wrt to another frame or body
@@ -142,74 +268,90 @@ class YAMSBody(SympyBody):
             else:
                 raise Exception('Unknown class type, use ReferenceFrame of YAMSBody as argument')
                 
-    def connectTo(self,child,type='Rigid', rel_pos=None, rot_type='Body', rot_amounts=None, rot_order=None):
-        child.parent = self
+    def connectTo(parent,child,type='Rigid', rel_pos=None, rot_type='Body', rot_amounts=None, rot_order=None, dynamicAllowed=False):
+        # register parent/child relationship
+        child.parent = parent
+        parent.children.append(child)
+        if isinstance(parent, YAMSInertialBody):
+            parent.inertial_frame = parent.frame
+            child.inertial_frame = parent.frame
+            parent.inertial_origin = parent.origin
+            child.inertial_origin = parent.origin
+        else:
+            if parent.inertial_frame is None:
+                raise Exception('Parent body was not connected to an inertial frame. Bodies needs to be connected in order, starting from inertial frame.')
+            else:
+                child.inertial_frame  = parent.inertial_frame # the same frame is used for all connected bodies
+                child.inertial_origin = parent.origin
 
         if rel_pos is None or len(rel_pos)!=3:
             raise Exception('rel_pos needs to be an array of size 3')
 
+        pos = 0 * parent.frame.x
+        vel = 0 * parent.frame.x
+
+        t = dynamicsymbols._t
+
         if type=='Free':
             # --- "Free", "floating" connection
-            # Defining relative position and velocity of child wrt self
-            pos = 0 * self.frame.x
-            vel = 0 * self.frame.x
-            for d,e in zip(rel_pos[0:3], (self.frame.x, self.frame.y, self.frame.z)):
+            if not isinstance(parent, YAMSInertialBody):
+                raise Exception('Parent needs to be inertial body for a free connection')
+            # Defining relative position and velocity of child wrt parent
+            for d,e in zip(rel_pos[0:3], (parent.frame.x, parent.frame.y, parent.frame.z)):
                 if d is not None:
                     pos += d * e
-                    if isinstance(d, Function):
-                        vel += diff(d) * e
-            child.origin.set_pos(self.origin, pos)
-            child.origin.set_vel(self.frame,  vel);
-            # Orientation
-            if rot_amounts is None:
-                child.frame.orient(self.frame, 'Axis', (0, self.frame.x))
-            else:
-                child.frame.orient(self.frame, rot_type, rot_amounts, rot_order) # <<< 
-            #
-            # >>>> TODO Express origin and mass center as function of other frames
-    #        child.masscenter.v2pt_theory(child.origin, self.frame , child.frame); # GN & T are fixed in e_T
-    #        child.masscenter.v2pt_theory(child.origin, ref.frame, child.frame); # GN & T are fixed in e_T
+                    vel += diff(d,t) * e
 
         elif type=='Rigid':
-            # Defining relative position and velocity of child wrt self
-            pos = 0 * self.frame.x
-            vel = 0 * self.frame.x
-            for d,e in zip(rel_pos[0:3], (self.frame.x, self.frame.y, self.frame.z)):
+            # Defining relative position and velocity of child wrt parent
+            for d,e in zip(rel_pos[0:3], (parent.frame.x, parent.frame.y, parent.frame.z)):
                 if d is not None:
                     pos += d * e
-                    if isinstance(d, Function):
+                    if exprHasFunction(d) and not dynamicAllowed:
                         raise Exception('Position variable cannot be a dynamic variable for a rigid connection: variable {}'.format(d))
-            child.origin.set_pos(self.origin, pos)
-            child.origin.set_vel(self.frame,  vel);
-            # Orientation (creating a path connecting frames together)
-            if rot_amounts is None:
-                child.frame.orient(self.frame, 'Axis', (0, self.frame.x) ) 
-            else:
-                if rot_type=='Axis':
-                    child.frame.orient(self.frame, rot_type, rot_amounts) # <<< 
-                else:
-                    child.frame.orient(self.frame, rot_type, rot_amounts, rot_order) # <<< 
-
+                    if dynamicAllowed:
+                        vel += diff(d,t) * e
         elif type=='Joint':
-            # Defining relative position and velocity of child wrt self
-            pos = 0 * self.frame.x
-            vel = 0 * self.frame.x
-            for d,e in zip(rel_pos[0:3], (self.frame.x, self.frame.y, self.frame.z)):
+            # Defining relative position and velocity of child wrt parent
+            for d,e in zip(rel_pos[0:3], (parent.frame.x, parent.frame.y, parent.frame.z)):
                 if d is not None:
                     pos += d * e
-                    if isinstance(d, Function):
+                    if exprHasFunction(d) and not dynamicAllowed:
                         raise Exception('Position variable cannot be a dynamic variable for a joint connection, variable: {}'.format(d))
-            child.origin.set_pos(self.origin, pos)
-            child.origin.set_vel(self.frame,  vel);
+                    if dynamicAllowed:
+                        vel += diff(d,t) * e
             #  Orientation
             if rot_amounts is None:
                 raise Exception('rot_amounts needs to be provided with Joint connection')
             for d in rot_amounts:
-                if d!=0 and not isinstance(d, Function):
+                if d!=0 and not exprHasFunction(d):
                     raise Exception('Rotation amount variable should be a dynamic variable for a joint connection, variable: {}'.format(d))
-            child.frame.orient(self.frame, rot_type, rot_amounts, rot_order) # <<< 
         else:
             raise Exception('Unsupported joint type: {}'.format(type))
+
+        # Orientation (creating a path connecting frames together)
+        if rot_amounts is None:
+            child.frame.orient(parent.frame, 'Axis', (0, parent.frame.x) ) 
+        else:
+            if rot_type in ['Body','Space']:
+                child.frame.orient(parent.frame, rot_type, rot_amounts, rot_order) # <<< 
+            else:
+                child.frame.orient(parent.frame, rot_type, rot_amounts) # <<< 
+
+
+        # Position of child origin wrt parent origin
+        child.origin.set_pos(parent.origin, pos)
+        # Velocity of child origin frame wrt parent frame (0 for rigid or joint)
+        child.origin.set_vel(parent.frame, vel);
+        # Velocity of child masscenter wrt parent frame, based on origin vel (NOTE: for rigid body only, should be overriden for flexible body)
+        child.masscenter.v2pt_theory(child.origin, parent.frame, child.frame);
+        # Velocity of child origin wrt inertial frame, using parent origin/frame as intermediate
+        child.origin.v1pt_theory(parent.origin, child.inertial_frame, parent.frame)
+        # Velocity of child masscenter wrt inertial frame, using parent origin/frame as intermediate
+        child.masscenter.v1pt_theory(parent.origin, child.inertial_frame, parent.frame)
+
+        #r_OB = child.origin.pos_from(child.inertial_origin)
+        #vel_OB = r_OB.diff(time, child.inertial_frame)
 
     # --------------------------------------------------------------------------------}
     # --- Visualization 
@@ -421,12 +563,6 @@ class YAMSInertialBody(YAMSBody):
     def __init__(self, name='E'): # "Earth"
         YAMSBody.__init__(self,name)
     
-    def __repr__(self):
-        s='<YAMS InertialBody object "{}" with attributes:>\n'.format(self.name)
-        s+=' - origin:       {}\n'.format(self.origin)
-        s+=' - frame:        {}\n'.format(self.frame)
-        s+=' - masscenter:   {}\n'.format(self.masscenter)
-        return s
 
 class GroundBody(Body):
     def __init__(B):
@@ -494,6 +630,7 @@ class YAMSRigidBody(YAMSBody,SympyRigidBody):
         if rho_G is None: 
             rho_G=symbols('x_G_'+name+ ', y_G_'+name+ ', z_G_'+name)
         self.setGcoord(rho_G)
+        self.masscenter.set_vel(self.frame, 0 * self.frame.x)
             
         # Init Sympy Rigid Body 
         SympyRigidBody.__init__(self, name, self.masscenter, self.frame, mass, _inertia)
@@ -523,9 +660,7 @@ class YAMSRigidBody(YAMSBody,SympyRigidBody):
         return self.inertia[0].to_matrix(self.frame)
     
     def __repr__(self):
-        s='<YAMS RigidBody object "{}" with attributes:>\n'.format(self.name)
-        s+=' - origin:       {}\n'.format(self.origin)
-        s+=' - frame:        {}\n'.format(self.frame)
+        s=YAMSBody.__repr__(self)
         s+=' - mass:         {}\n'.format(self.mass)
         s+=' - inertia:      {}\n'.format(self.inertia[0].to_matrix(self.frame))
         s+='   (defined at point {})\n'.format(self.inertia[1])
@@ -545,8 +680,244 @@ class RigidBody(Body):
         B.Mass    = Mass 
 
 # --------------------------------------------------------------------------------}
-# --- Beam Body 
+# --- Flexible body/Beam Body 
 # --------------------------------------------------------------------------------{
+class YAMSFlexibleBody(YAMSBody):
+    def __init__(self, name, nq, directions=None):
+        YAMSBody.__init__(self,name)
+        self.name=name
+        self.L= symbols('L_'+name)
+        self.q=[]     # DOF
+        self.qd=[]    # DOF velocity as "anonymous" variables
+        self.qdot=[]  # DOF velocities
+        self.qddot=[] # DOF accelerations
+        t=dynamicsymbols._t
+        for i in np.arange(nq):
+            self.q.append(dynamicsymbols('q_{}{}'.format(name,i+1)))
+            self.qd.append(dynamicsymbols('qd_{}{}'.format(name,i+1)))
+            self.qdot.append(diff(self.q[i],t))
+            self.qddot.append(diff(self.qdot[i],t))
+        # --- Mass matrix related
+        self.mass=symbols('M_{}'.format(name))
+        self.J   = Taylor(self.name,'J'  , 3 , 3, nq=nq, rname='xyz', cname='xyz')
+        self.Ct  = Taylor(self.name,'C_t', nq, 3, nq=nq, rname=None , cname='xyz')
+        self.Cr  = Taylor(self.name,'C_r', nq, 3, nq=nq, rname=None , cname=['x','y','z'])
+        self.Me  = Taylor(self.name,'M_e', nq, nq, nq=nq, rname=None , cname=None)
+        self.mdCM= Taylor(self.name,'M_d', 3,  1,  nq=nq, rname='xyz', cname=[''])
+        # --- h-omega related terms
+        self.Gr = Taylor(self.name, 'G_r', 3,  3,  nq=nq, rname='xyz', cname='xyz')
+        self.Ge = Taylor(self.name, 'G_e', nq, 3,  nq=nq, rname=None, cname='xyz')
+        self.Oe = Taylor(self.name, 'O_e', nq, 6,  nq=nq, rname=None, cname=['xx','yy','zz','xy','yz','xz'])
+        # --- Stiffness and damping
+        self.Ke  = Taylor(self.name,'K_e', nq, nq, nq=nq, rname=None , cname=None, order=1)
+        self.De  = Taylor(self.name,'D_e', nq, nq, nq=nq, rname=None , cname=None, order=1)
+        
+        self.defineExtremity(directions)
+        
+        self.origin = Point('O_'+self.name)
+        # Properties from Rigid body
+        # inertia
+        
+        # NOTE: masscenter put at origin for flexible bodies for now
+        self.masscenter.set_pos(self.origin, 0*self.frame.x)
+ 
+    def __repr__(self):
+        s=YAMSBody.__repr__(self)
+        s+=' - mass:         {}\n'.format(self.mass)
+        #s+=' - inertia:      {}\n'.format(self.inertia[0].to_matrix(self.frame))
+        #s+='   (defined at point {})\n'.format(self.inertia[1])
+        #s+=' - masscenter:   {}\n'.format(self.masscenter)
+        #s+='   (position from origin: {})\n'.format(self.masscenter.pos_from(self.origin))
+        s+=' - q:            {}\n'.format(self.q)
+        s+=' - qd:           {}\n'.format(self.qd)
+        return s
+
+
+    def defineExtremity(self, directions=None): 
+        if directions is None:
+            directions=['xyz']*len(self.q)
+        # Hard coding 1 connection at beam extremity
+        self.alpha =[dynamicsymbols('alpha_x{}'.format(self.name)),dynamicsymbols('alpha_y{}'.format(self.name)),dynamicsymbols('alpha_z{}'.format(self.name))]
+        self.uc    =[dynamicsymbols('u_x{}c'.format(self.name)),dynamicsymbols('u_y{}c'.format(self.name)),0]
+        alphax = 0
+        alphay = 0
+        alphaz = 0
+        uxc = 0
+        uyc = 0
+        vList =[]
+        uList =[]
+        for i in np.arange(len(self.q)):
+            u=0
+            v=0
+            if 'x' in directions[i]:
+                u = symbols('u_x{}{}c'.format(self.name,i+1))
+                v = symbols('v_y{}{}c'.format(self.name,i+1)) 
+                uxc   += u * self.q[i]
+                alphay+= v * self.q[i]
+            if 'y' in directions[i]:
+                u = symbols('u_y{}{}c'.format(self.name,i+1))
+                v = symbols('v_x{}{}c'.format(self.name,i+1))
+                uyc   += u * self.q[i]
+                alphax+= v * self.q[i]
+            if 'z' in directions[i]:
+                v = symbols('v_z{}{}c'.format(self.name,i+1))
+                alphaz+= v * self.q[i]
+            vList.append(v)
+            uList.append(u)
+        
+        self.alphaSubs=[(self.alpha[0], alphax ), (self.alpha[1],alphay), (self.alpha[2],alphaz)]
+        self.ucSubs   =[(self.uc[0], uxc ), (self.uc[1],uyc)]
+        self.v2Subs = [(v1*v2,0) for v1 in vList for v2 in vList] # Second order terms put to 0
+
+        self.ucList =uList # "PhiU" values at connection point for each mode
+        self.vcList =vList # "PhiV" valaes at connection point for each mode
+        
+    def bodyMassMatrix(self, q=None, form='TaylorExpanded'):
+        """ Body mass matrix in body coordinates M'(q)
+        """
+        nq=len(self.q)
+        if q is None:
+            q = self.q
+        else:
+            if len(q)!=len(self.q):
+                raise Exception('Inconsistent dimension between q ({}) and body nq ({}) for body {}'.format(len(q),nq,self.name))
+        self.M=zeros(6+nq,6+nq)
+        # Mxx
+        self.M[0,0] = self.mass
+        self.M[1,1] = self.mass
+        self.M[2,2] = self.mass
+        if form=='symbolic':
+            # Mxr, Mxg
+            for i in np.arange(0,3):
+                for j in np.arange(3,6+nq):
+                    self.M[i,j]=Symbol('M_{}{}{}'.format(self.name,i+1,j+1))
+            self.M[0,3]=0
+            self.M[1,4]=0
+            self.M[2,5]=0
+            # Mrr
+            char='xyz'
+            for i in np.arange(3,6):
+                for j in np.arange(3,6):
+                    self.M[i,j]=Symbol('J_{}{}{}'.format(self.name,char[i-3],char[j-3]))
+            # Mrg
+            for i in np.arange(3,6):
+                for j in np.arange(6,6+nq):
+                    self.M[i,j]=Symbol('M_{}{}{}'.format(self.name,i+1,j+1))
+            # Mgg
+            for i in np.arange(6,6+nq):
+                for j in np.arange(6,6+nq):
+                    self.M[i,j]=Symbol('GM_{}{}{}'.format(self.name,i-5,j-5))
+
+            for i in np.arange(0,6+nq):
+                for j in np.arange(0,6+nq):
+                    self.M[j,i]=self.M[i,j]
+            pass
+
+        elif form=='TaylorExpanded':
+            # Mrx, Mxr
+            self.M[0:3,3:6] = skew(self.mdCM.eval(q))
+            self.M[3:6,0:3] = self.M[0:3,3:6].transpose()
+            # Mrr
+            self.M[3:6,3:6] = self.J.eval(q)
+            # Mgx, Mxg
+            self.M[6:6+nq,0:3] = self.Ct.eval(q)
+            self.M[0:3,6:6+nq] = self.M[6:6+nq,0:3].transpose()
+            # Mrg
+            self.M[6:6+nq,3:6] = self.Cr.eval(q)
+            self.M[3:6,6:6+nq] = self.M[6:6+nq,3:6].transpose()
+            # Mgg
+            Mgg = self.Me.eval(q)
+            self.M[6:6+nq,6:6+nq] = Mgg
+        else:
+            raise Exception('Unknown mass matrix form option `{}`'.format(form))
+        
+        return self.M
+    
+    def bodyQuadraticForce(self, omega, q, qd):
+        """ Body quadratic force  k_\omega (or h_omega)  (centrifugal and gyroscopic)
+        inputs:
+           omega: angular velocity of the body wrt to the inertial frame, expressed in body coordinates
+           q,qd: generalied coordinates and speeds for this body
+        """
+        # --- Safety
+        q     = ensureMat(q , len(q), 1)
+        qd    = ensureMat(qd, len(qd), 1)
+        omega = ensureMat(omega, 3, 1)
+        nq=len(self.q)
+        if len(q)!=nq:
+            raise Exception('Inconsistent dimension between q ({}) and body nq ({}) for body {}'.format(len(q),nq,self.name))
+            
+        # --- Init
+        k_omega = Matrix(np.zeros((6+nq,1)).astype(int)) 
+        om_til = skew(omega)
+        ox,oy,oz=omega[0,0],omega[1,0],omega[2,0]
+        omega_q = Matrix([ox**2, oy**2,oz**2, ox*oy, oy*oz, ox*oz]).reshape(6,1)
+        
+        # k_omega_t
+        k_omega[0:3,0] = 2 *om_til * transpose(self.Ct.eval(q)) * qd
+        k_omega[0:3,0] += om_til * skew(self.mdCM.eval(q)) * omega
+        # k_omega_r
+        k_omega[3:6,0] = om_til * self.J.eval(q) * omega
+        for k in np.arange(nq):
+            k_omega[3:6,0] += self.Gr.eval(q) * qd[k] * omega
+        # k_omega_e
+        k_omega[6:6+nq,0] = self.Oe.eval(q) * omega_q
+        for k in np.arange(nq):
+            k_omega[6:6+nq,0] += self.Ge.eval(q) * qd[k] * omega
+
+        return k_omega
+    
+    def bodyElasticForce(self, q, qd):
+        # --- Safety
+        q     = ensureMat(q , len(q), 1)
+        qd    = ensureMat(qd, len(qd), 1)
+        nq=len(self.q)
+        if len(q)!=nq:
+            raise Exception('Inconsistent dimension between q ({}) and body nq ({}) for body {}'.format(len(q),nq,self.name))
+        # --- Init
+        ke = Matrix(np.zeros((6+nq,1)).astype(int)) 
+        ke[6:6+nq,0] = self.Ke.eval(q)*q + self.De.eval(q)*qd
+        return ke
+    
+    def connectTo(parent, child, type, rel_pos, rot_type='Body', rot_amounts=None, rot_order=None, rot_order_elastic='XYZ', rot_type_elastic='SmallRot', doSubs=True):
+        """
+        The connection between a flexible body and another body is similar to the connections between rigid bodies
+        The relative position and rotations between bodies are modified in this function to include the elastic 
+        displacements and rotations.
+        
+        For now, we only allow 1 connection for each flexible body.
+        
+        rel_pos: for flexible bodies, this is the position when the body is undeflected!
+        rot_amounts: for flexible bodies, these are the rotations when the body is undeflected!
+                     These rotations are assumed to occur AFTER the rotations from the deflection
+                     
+        s_PC  : vector from parent origin to child origin
+        s_PC0 : vector from parent origin to child origin when undeflected
+        
+        s_PC = s_PC0 + u
+        
+        """
+        rel_pos = [r + u for r,u in zip(rel_pos, parent.uc)]
+        # Computing DCM due to elasti motion
+        M_B2e = rotToDCM(rot_type_elastic, rot_amounts = parent.alpha, rot_order=rot_order_elastic) # from parent to deformed parent 
+        # Insert elastic DOF
+        if doSubs:
+            rel_pos = [r.subs(parent.ucSubs) for r in rel_pos]
+            M_B2e   = M_B2e.subs(parent.alphaSubs)
+        # Full DCM
+        if rot_amounts is None:
+            M_c2B = M_B2e.transpose()
+        else:
+            M_e2c = rotToDCM(rot_type,         rot_amounts = rot_amounts,  rot_order=rot_order) # from parent to deformed parent 
+            M_c2B = (M_e2c.transpose() * M_B2e.transpose() )
+        
+        #print('Rel pos with Elastic motion:', rel_pos)
+        #print('Rel rot with Elastic motion:', rot_amounts)
+            
+        YAMSBody.connectTo(parent, child, type, rel_pos=rel_pos, rot_type='DCM', rot_amounts=M_c2B, dynamicAllowed=True)
+        #YAMSBody.connectTo(parent, child, type, rel_pos=rel_pos, dynamicAllowed=True)
+        
+    
 class BeamBody(Body):
     def __init__(B,Name,nf,main_axis='z',nD=2):
         super(BeamBody,B).__init__(Name)
@@ -712,3 +1083,395 @@ def fBMB(BB_I_inI,MM):
     MM_I = np.dot(np.transpose(BB_I_inI), MM).dot(BB_I_inI)
     return MM_I
 
+
+
+
+# --------------------------------------------------------------------------------}
+# --- Kane's method 
+# --------------------------------------------------------------------------------{
+def _initialize_kindiffeq_matrices(coordinates, speeds, kdeqs, uaux=Matrix()):
+    """Initialize the kinematic differential equation matrices.
+    See sympy.mechanics.kane
+
+    kdeqs: kinematic differential equations
+    """
+    from sympy import solve_linear_system_LU
+
+    if kdeqs:
+        if len(coordinates) != len(kdeqs):
+            raise ValueError('There must be an equal number of kinematic differential equations and coordinates.')
+        coordinates = Matrix(coordinates)
+        kdeqs = Matrix(kdeqs)
+        u     = Matrix(speeds)
+        qdot  = coordinates.diff(dynamicsymbols._t)
+        # Dictionaries setting things to zero
+        u_zero = dict((i, 0) for i in u)
+        uaux_zero = dict((i, 0) for i in uaux)
+        qdot_zero = dict((i, 0) for i in qdot)
+
+        f_k = msubs(kdeqs, u_zero, qdot_zero)
+        k_ku = (msubs(kdeqs, qdot_zero) - f_k).jacobian(u)
+        k_kqdot = (msubs(kdeqs, u_zero) - f_k).jacobian(qdot)
+
+        f_k = k_kqdot.LUsolve(f_k)
+        k_ku = k_kqdot.LUsolve(k_ku)
+        k_kqdot = eye(len(qdot))
+
+        _qdot_u_map = solve_linear_system_LU( Matrix([k_kqdot.T, -(k_ku * u + f_k).T]).T, qdot)
+
+        _f_k = msubs(f_k, uaux_zero)
+        _k_ku = msubs(k_ku, uaux_zero)
+        _k_kqdot = k_kqdot
+    else:
+        _qdot_u_map = None
+        _f_k = Matrix()
+        _k_ku = Matrix()
+        _k_kqdot = Matrix()
+    return _qdot_u_map, _f_k, _k_ku, _k_kqdot
+
+
+
+def kane_frstar_alt(bodies, coordinates, speeds, kdeqs, inertial_frame, uaux=Matrix(), udep=None, Ars=None):
+    """Form the generalized inertia force."""
+    from sympy.core.backend import zeros, Matrix, diff
+    from sympy.core.compatibility import range
+    from sympy.physics.vector import partial_velocity
+    from sympy.physics.mechanics.particle import Particle
+
+    t = dynamicsymbols._t
+    N = inertial_frame
+
+    # Derived inputs
+    speeds = Matrix(speeds) # u
+    udot = speeds.diff(t)
+    qdot_u_map,_,_,_ = _initialize_kindiffeq_matrices(coordinates, speeds, kdeqs, uaux=Matrix())
+                                                  
+    # Dicts setting things to zero
+    udot_zero = dict((i, 0) for i in udot)
+    uaux_zero = dict((i, 0) for i in uaux)
+    uauxdot   = [diff(i, t) for i in uaux]
+    uauxdot_zero = dict((i, 0) for i in uauxdot)
+    # Dictionary of q' and q'' to u and u'
+    q_ddot_u_map = dict((k.diff(t), v.diff(t)) for (k, v) in qdot_u_map.items())
+    q_ddot_u_map.update(qdot_u_map)
+
+    # Fill up the list of partials: format is a list with num elements
+    # equal to number of entries in body list. Each of these elements is a
+    # list - either of length 1 for the translational components of
+    # particles or of length 2 for the translational and rotational
+    # components of rigid bodies. The inner most list is the list of
+    # partial velocities.
+    def get_partial_velocity(body):
+        if isinstance(body,YAMSRigidBody) or isinstance(body, SympyRigidBody):
+            vlist = [body.masscenter.vel(N), body.frame.ang_vel_in(N)]
+        elif isinstance(body, Particle):
+            vlist = [body.point.vel(N),]
+        elif isinstance(body,YAMSFlexibleBody):
+            print('>>>> FlexibleBody TODO, Jv Jo to partials')
+            vlist=[]
+        else:
+            raise TypeError('The body list may only contain either ' 'RigidBody or Particle as list elements.')
+        v = [msubs(vel, qdot_u_map) for vel in vlist]
+        return partial_velocity(v, speeds, N)
+
+    partials = [get_partial_velocity(body) for body in bodies]
+
+    # Compute fr_star in two components:
+    # fr_star = -(MM*u' + nonMM)
+    o = len(speeds)
+    MM = zeros(o, o)
+    nonMM = zeros(o, 1)
+    zero_uaux      = lambda expr: msubs(expr, uaux_zero)
+    zero_udot_uaux = lambda expr: msubs(msubs(expr, udot_zero), uaux_zero)
+    FI=[]
+    FT=[]
+    for i, body in enumerate(bodies):
+        if isinstance(body,YAMSRigidBody) or isinstance(body, SympyRigidBody):
+            Jv = partials[i][0] # NOTE: these are vectors and not matrix lime my "Jv"
+            Jo = partials[i][1]
+            #print('Partials')
+            #print(partials[i][0][0].to_matrix(N))
+            #print('Partials')
+            #print(partials[i][1])
+            # Rigid Body (see sympy.mechanics.kane)
+            M     = zero_uaux(       body.mass                )
+            I     = zero_uaux(       body.central_inertia     )
+            vel   = zero_uaux(       body.masscenter.vel(N)   )
+            omega = zero_uaux(       body.frame.ang_vel_in(N) )
+            acc   = zero_udot_uaux(  body.masscenter.acc(N)   )
+            inertial_force  = (M.diff(t) * vel + M * acc)
+            inertial_torque = zero_uaux((I.dt(body.frame) & omega) + msubs(I & body.frame.ang_acc_in(N), udot_zero) + (omega ^ (I & omega)))
+            FI.append(inertial_force)
+            FT.append(inertial_torque)
+            for j in range(o):
+                tmp_vel = zero_uaux(partials[i][0][j])
+                tmp_ang = zero_uaux(I & partials[i][1][j])
+                #print('>>> I',I)
+                #print('>>> p',partials[i][1][j])
+                #print('>>> a',tmp_ang)
+                for k in range(o):
+                    # translational
+                    MM[j, k] += M * (tmp_vel & partials[i][0][k])
+                    # rotational
+                    MM[j, k] += (tmp_ang & partials[i][1][k])
+                nonMM[j] += inertial_force & partials[i][0][j]
+                nonMM[j] += inertial_torque & partials[i][1][j]
+                body.MM   = MM
+                body.nonMM= nonMM
+                body.inertial_torque= inertial_torque
+                body.inertial_force= inertial_force
+
+        elif isinstance(body,YAMSFlexibleBody):
+            print('>>>> FlexibleBody TODO')
+            M     = zero_uaux(body.mass)
+            #I     = zero_uaux(body.central_inertia)
+            vel   = zero_uaux(body.origin.vel(N))
+            omega = zero_uaux(body.frame.ang_vel_in(N))
+            acc   = zero_udot_uaux(body.origin.acc(N))
+
+        else:
+            # Particles
+            M = zero_uaux(body.mass)
+            vel = zero_uaux(body.point.vel(N))
+            acc = zero_udot_uaux(body.point.acc(N))
+            inertial_force = (M.diff(t) * vel + M * acc)
+            for j in range(o):
+                temp = zero_uaux(partials[i][0][j])
+                for k in range(o):
+                    MM[j, k] += M * (temp & partials[i][0][k])
+                nonMM[j] += inertial_force & partials[i][0][j]
+
+    # Compose fr_star out of MM and nonMM
+    #print('udot', udot)
+    #print('nonMM before:', nonMM)
+    #print('MM before:', MM)
+    MM      = zero_uaux(msubs(MM, q_ddot_u_map))
+    nonMM   = msubs(msubs(nonMM, q_ddot_u_map), udot_zero, uauxdot_zero, uaux_zero)
+    fr_star = -(MM * msubs(Matrix(udot), uauxdot_zero) + nonMM)
+
+    # If there are dependent speeds, we need to find fr_star_tilde
+    if udep:
+        p = o - len(udep)
+        fr_star_ind = fr_star[:p, 0]
+        fr_star_dep = fr_star[p:o, 0]
+        fr_star = fr_star_ind + (Ars.T * fr_star_dep)
+        # Apply the same to MM
+        MMi = MM[:p, :]
+        MMd = MM[p:o, :]
+        MM = MMi + (Ars.T * MMd)
+
+    #self._bodylist = bodies
+    #self._frstar = fr_star
+    #self._k_d = MM
+    #self._f_d = -msubs(self._fr + self._frstar, udot_zero)
+    return fr_star, MM
+
+
+
+
+
+#coordinates = [x,phi_y, psi]
+#speeds      = [xd, omega_y_T, omega_x_R]
+#qspeeds     = [diff(x,time), diff(phi_y,time), diff(psi,time)]
+#loads = [grav_F, grav_T, grav_N, grav_R, F_buy, F_moor, M_moor]
+#bodies = [fnd,twr,nac,rot]
+
+def kane_frstar(bodies, qspeeds, origin, inertial_frame, Omega_Subs=[(None,None)], Mform='TaylorExpanded'):
+    """ """ 
+
+    o = len(qspeeds)
+    frstar_t = zeros(o, 1)
+    frstar_o = zeros(o, 1)
+
+    O_E = origin
+    e_E = inertial_frame
+    time = dynamicsymbols._t
+
+    for i,body in enumerate(bodies):
+        M     = body.mass
+
+        #print(type(body),isinstance(body, YAMSFlexibleBody), isinstance(body, YAMSRigidBody), isinstance(body, YAMSBody), isinstance(body, SympyBody))
+        if isinstance(body, YAMSFlexibleBody):
+            P = body.origin
+            I = None
+        else:
+            P = body.masscenter
+            I = body.central_inertia
+
+        # --- Step 2: Positions and orientation
+        r = P.pos_from(O_E)
+        R = e_E.dcm(body.frame) # from body to inertial
+        # --- Step 3/4: Velocities and accelerations
+        vel   = P.vel(e_E)
+        omega = body.frame.ang_vel_in(e_E)
+        acc   = P.acc(e_E)
+        alpha = omega.diff(time, e_E)
+        # Alternative: vel from r and omega from identification:
+        #vel_drdt = r.diff(time, e_E).simplify()
+        #OmSkew = (R.diff(time) *  R.transpose()).simplify()
+        #omega_ident = OmSkew[2,1] * e_E.x + OmSkew[0,2]*e_E.y + OmSkew[1,0] * e_E.z
+        #acc_drdt2 = r.diff(time, e_E).diff(time,e_E).simplify()
+        # --- Step 5 Partial velocities
+        v  = vel.subs(Omega_Subs).to_matrix(e_E)
+        om = omega.subs(Omega_Subs).to_matrix(e_E)
+        Jv = v.jacobian(qspeeds)
+        Jo = om.jacobian(qspeeds)
+        #print('Partials Jv')
+        #print(Jv)
+        #print('Partials Jo')
+        #print(Jo)
+        # --- Step 6 Inertia forces
+        if isinstance(body,YAMSRigidBody) or isinstance(body, SympyRigidBody):
+            Fstar = - (M * acc + M.diff(time) * vel) #inertial_force
+            body.acc = acc
+            body.vel = vel
+            Fstar = Fstar.subs(Omega_Subs)
+
+            RIRt  = R*I.to_matrix(body.frame)*R.transpose()
+            Tstar = - RIRt * alpha.to_matrix(e_E) \
+                    - coord2vec(om, e_E).cross( coord2vec(RIRt *om, e_E)).to_matrix(e_E)
+            frstar_t+=Jv.transpose() * Fstar.to_matrix(e_E)
+            frstar_o+=Jo.transpose() * Tstar
+
+        elif isinstance(body,YAMSFlexibleBody):
+            MM = body.bodyMassMatrix(form=Mform)
+            print('>>>> FlexibleBody TODO')
+            Fstar=0
+            Tstar=0
+
+        else:
+            raise Exception('Unsupported body type: {}'.format(type(body)))
+        # --- Storing for debug
+        body.vel=vel
+        body.omega=omega
+        body.v=v
+        body.om=om
+        body.Jv=Jv
+        body.Jo=Jo
+        body.Fstar = Fstar
+        body.Tstar = Tstar
+
+    return frstar_t + frstar_o
+
+# --------------------------------------------------------------------------------}
+# --- Kane fr 
+# --------------------------------------------------------------------------------{
+def kane_fr_alt(loads, coordinates, speeds, kdeqs, inertial_frame, uaux=Matrix(), udep=None):
+    """
+      - For each force: compute the velocity at the point of application, v_P, and then do
+        fr =  [d v/ dqdot]^t F
+      - For each moment: compute the angular velocity of the frame (in E)
+        fr =  [d om/ dqdot]^t M
+    """
+    from sympy.physics.vector import partial_velocity
+ 
+
+    def _f_list_parser(fl, ref_frame):
+        """Parses the provided forcelist composed of items of the form (obj, force).
+        Returns a tuple containing:
+            vel_list: The velocity (ang_vel for Frames, vel for Points) in the provided reference frame.
+            f_list: The forces.
+        Used internally in the KanesMethod and LagrangesMethod classes.
+        """
+        def flist_iter():
+            for pair in fl:
+                obj, force = pair
+                if isinstance(obj, ReferenceFrame):
+                    yield obj.ang_vel_in(ref_frame), force
+                elif isinstance(obj, Point):
+                    yield obj.vel(ref_frame), force
+                else:
+                    raise TypeError('First entry in each forcelist pair must be a point or frame.')
+        if not fl:
+            vel_list, f_list = (), ()
+        else:
+            unzip = lambda l: list(zip(*l)) if l[0] else [(), ()]
+            vel_list, f_list = unzip(list(flist_iter()))
+        return vel_list, f_list
+
+    """
+    Form the generalized active force.
+        See _form_fr in sympy.mechanics
+    """
+    N = inertial_frame
+    # Derived inputs
+    speeds = Matrix(speeds) # u
+    qdot_u_map,_,_,_ = _initialize_kindiffeq_matrices(coordinates, speeds, kdeqs, uaux=Matrix())
+    
+    # pull out relevant velocities for constructing partial velocities
+    vel_list, f_list = _f_list_parser(loads, N)
+    vel_list = [msubs(i, qdot_u_map) for i in vel_list]
+    f_list   = [msubs(i, qdot_u_map) for i in f_list]
+    print(vel_list)
+
+    # Fill Fr with dot product of partial velocities and forces
+    o = len(speeds)
+    b = len(f_list)
+    FR = zeros(o, 1)
+    partials = partial_velocity(vel_list, speeds, N)
+    #print('>>> ', len(partials), len(partials[0]))
+    for i in range(o):
+        FR[i] = sum(partials[j][i] & f_list[j] for j in range(b))
+
+    # In case there are dependent speeds
+    if udep:
+        p = o - len(udep)
+        FRtilde = FR[:p, 0]
+        FRold = FR[p:o, 0]
+        FRtilde += Ars.T * FRold
+        FR = FRtilde
+    #self._forcelist = loads
+    #self._fr = FR
+    return FR
+
+
+def kane_fr(body_loads, speeds, inertial_frame):
+    """
+    Compute Kane's "fr" terms, using a list of bodies and external loads
+
+    For each body:  fr = Jv * F@refP  + Jo * M
+    where Jv and Jo are the jacoban of the linear velocity of the point (for a force) and angular velocity of the frame (for a moment). The point "refP" should be the one used in the calculation of Jv (typically the center of mass for rigid body)
+
+    Right now, Jv, and Jo are computed when calling kane_frstar...
+
+    Alternatively (see kane_fr_alt and _form_fr):
+      - For each force: compute the velocity at the point of application, v_P, and then do
+        fr =  [d v/ dqdot]^t F
+      - For each moment: compute the angular velocity of the frame (in E)
+        fr =  [d om/ dqdot]^t M
+
+    INPUTS:
+        body_loads: a list of tuples of the form  (body, (point_or_frame, force_or_moment ) )
+            The tuples (point_or_frame, force_or_moment) are the ones needed when calling sympy's kane
+            For instance:
+               body_loads = [
+                    (nac, (N        , Thrust*N.x)),
+                    (nac, (nac.frame, Qaero*N.x ))
+                    ]
+        
+    """
+    import sympy.physics.vector as vect
+
+    fr_t = zeros(len(speeds), 1)
+    fr_o = zeros(len(speeds), 1)
+
+    N = inertial_frame
+
+    for bl in body_loads:
+        body, (point_or_frame, force_or_moment) = bl
+        if not hasattr(body,'Jv') or not hasattr(body, 'Jo'):
+            raise Exception('Jacobians matrices need to be computed for body {}. (Call frstart first)'.format(body.name))
+        if isinstance(point_or_frame, ReferenceFrame):
+            # Moment and frame
+            Moment = force_or_moment
+            fr_o += body.Jo.transpose()*Moment.to_matrix(N)
+            pass
+        else:
+            # Force and point
+            Force = force_or_moment
+            point = point_or_frame
+            r = point.pos_from(body.masscenter)
+            fr_t += body.Jv.transpose()*Force.to_matrix(N)
+            # Need to add moment if r/=0
+            fr_o += body.Jo.transpose()*(vect.cross( r, Force)).to_matrix(N)
+    return fr_t+fr_o

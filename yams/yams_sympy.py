@@ -12,7 +12,7 @@ from sympy import lambdify
 #from sympy.abc import *
 from sympy import trigsimp
 from sympy import cos,sin
-from sympy import zeros
+from sympy import zeros, transpose
 
 from sympy.physics.mechanics import Body as SympyBody
 from sympy.physics.mechanics import RigidBody as SympyRigidBody
@@ -1235,7 +1235,8 @@ def kane_frstar_alt(bodies, coordinates, speeds, kdeqs, inertial_frame, uaux=Mat
 
         # Perform important substitution and store body contributions
         body.MM_alt     = zero_uaux(msubs(bodyMM, q_ddot_u_map))
-        body.nonMM_alt  = msubs(msubs(bodynonMM, q_ddot_u_map), udot_zero, uauxdot_zero, uaux_zero)
+        body.nonMM_alt_bef = bodynonMM
+        #body.nonMM_alt  = msubs(msubs(bodynonMM, q_ddot_u_map), udot_zero, uauxdot_zero, uaux_zero)
         # Cumulative MM and nonMM over all bodies
         MM    += bodyMM
         nonMM += bodynonMM
@@ -1248,10 +1249,10 @@ def kane_frstar_alt(bodies, coordinates, speeds, kdeqs, inertial_frame, uaux=Mat
         body.Jv_vect_alt=partials[i][0]
         body.Jo_vect_alt=partials[i][1]
     # End loop on bodies
+    nonMM = msubs(msubs(nonMM, q_ddot_u_map), udot_zero, uauxdot_zero, uaux_zero)
 
     # Compose fr_star out of MM and nonMM
     fr_star = -(MM * msubs(Matrix(udot), uauxdot_zero) + nonMM)
-
 
     # If there are dependent speeds, we need to find fr_star_tilde
     if udep:
@@ -1292,6 +1293,7 @@ def kane_frstar(bodies, coordinates, speeds, kdeqs, origin, inertial_frame, Omeg
     u = Matrix(speeds) # u
     udot = u.diff(t)
     qspeeds = q.diff(t)
+    qacc = qspeeds.diff(t)
     qdot_u_map,_,_,_ = _initialize_kindiffeq_matrices(q, u, kdeqs, uaux=Matrix())
 
     # Dicts setting things to zero
@@ -1372,17 +1374,46 @@ def kane_frstar(bodies, coordinates, speeds, kdeqs, origin, inertial_frame, Omeg
 
         elif isinstance(body,YAMSFlexibleBody):
             MMloc = body.bodyMassMatrix(form=Mform)
-            print('>>>> FlexibleBody TODO')
+            body.h_omega = body.bodyQuadraticForce(omega.to_matrix(body.frame), body.q, body.qdot)
+            body.h_elast = body.bodyElasticForce(body.q, body.qdot)
             inertial_force=0 # Fstar
             inertial_torque=0 # Tstar
-            Tstar=0
+            inertial_force_coord =MMloc[0:3,0:3] * acc.to_matrix(body.frame) 
+            inertial_force_coord+=MMloc[0:3,3:6] * alpha.to_matrix(body.frame)
+            inertial_force_coord+=MMloc[0:3,6:]  * Matrix(body.qddot)
+            inertial_force_coord+=body.h_omega[0:3,0]
+            inertial_force_coord+=body.h_elast[0:3,0]
+            inertial_torque_coord =MMloc[3:6,0:3] * acc.to_matrix(body.frame) 
+            inertial_torque_coord+=MMloc[3:6,3:6] * alpha.to_matrix(body.frame)
+            inertial_torque_coord+=MMloc[3:6,6:]  * Matrix(body.qddot)
+            inertial_torque_coord+=body.h_omega[3:6,0]
+            inertial_torque_coord+=body.h_elast[3:6,0]
+            inertial_elast_coord =MMloc[6:,0:3] * acc.to_matrix(body.frame) 
+            inertial_elast_coord+=MMloc[6:,3:6] * alpha.to_matrix(body.frame)
+            inertial_elast_coord+=MMloc[6:,6:]  * Matrix(body.qddot)
+            inertial_elast_coord+=body.h_omega[6:,0]
+            inertial_elast_coord+=body.h_elast[6:,0]
+            body.inertial_elast=inertial_elast_coord
+
+            inertial_force  = coord2vec(inertial_force_coord,body.frame) 
+            inertial_torque = coord2vec(inertial_torque_coord,body.frame) 
+
+            # Computing generatlized force Jv.f + Jo*M
+            for j in range(nq):
+                bodynonMM[j] += inertial_force  & Jv_vect[j]
+                bodynonMM[j] += inertial_torque & Jo_vect[j]
+                for k in range(len(body.q)):
+                    if q[j] == body.q[k]:
+                        bodynonMM[j] +=  inertial_elast_coord[k]
+            bnMMSubs = msubs(bodynonMM, q_ddot_u_map)
+            bodyMM = bnMMSubs.jacobian(udot)
 
         else:
             raise Exception('Unsupported body type: {}'.format(type(body)))
 
         # Perform important substitution and store body contributions
         body.MM      = msubs(bodyMM, q_ddot_u_map)
-        body.nonMM   = msubs(msubs(bodynonMM, q_ddot_u_map), udot_zero) #, uauxdot_zero, uaux_zero)
+        body.nonMM   = bodynonMM
 
         # Cumulative MM and nonMM over all bodies
         MM   +=bodyMM
@@ -1396,6 +1427,8 @@ def kane_frstar(bodies, coordinates, speeds, kdeqs, origin, inertial_frame, Omeg
         body.Jv_vect=Jv_vect
         body.Jo_vect=Jo_vect
     # End loop on bodies
+    # NOTE: substitution needs to be done at the end
+    nonMM  = msubs(msubs(nonMM, q_ddot_u_map), udot_zero) #, uauxdot_zero, uaux_zero)
 
     # Compose fr_star out of MM and nonMM
     fr_star = -(MM *Matrix(udot) + nonMM)
@@ -1452,14 +1485,12 @@ def kane_fr_alt(loads, coordinates, speeds, kdeqs, inertial_frame, uaux=Matrix()
     vel_list, f_list = _f_list_parser(loads, N)
     vel_list = [msubs(i, qdot_u_map) for i in vel_list]
     f_list   = [msubs(i, qdot_u_map) for i in f_list]
-    print(vel_list)
 
     # Fill Fr with dot product of partial velocities and forces
     o = len(speeds)
     b = len(f_list)
     FR = zeros(o, 1)
     partials = partial_velocity(vel_list, speeds, N)
-    #print('>>> ', len(partials), len(partials[0]))
     for i in range(o):
         FR[i] = sum(partials[j][i] & f_list[j] for j in range(b))
 

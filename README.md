@@ -12,13 +12,30 @@ It has since been extended to include more structural dynamics tools.
 
 
 ## QuickStart
-Download and install dependencies:
+Download, install dependencies and package:
 ```bash
 git clone https://github.com/ebranlard/yams
 cd yams
-python -m pip install --user -r requirements.txt
-make  
+python -m pip install --user -r requirements.txt  
+python -m pip install -e .      # install
+python -m unittest discover -v  # run test
 ```
+
+## Packages
+The repository contains a set of small packages:
+
+- yams: multibody analyses
+- beams: analytical results for beams
+- fast: tools to handle OpenFAST models, in particular a linear OpenFAST model
+- fem: Finite Element Method tools (beams)
+- kalman: kalman filter
+- mech\_system: tools for mechanical systems (M,C,K matrices), eigenvalue analysis, time integration
+- ode: tools for time integration of ODE
+- ws\_estimator: wind speed estimator for wind energy based on tabulated Cp Ct
+
+
+Some of the package may have dependency with the [weio](http://github.com/ebranlard/weio/) library to read and write files.
+
 
 
 

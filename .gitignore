@@ -6,3 +6,5 @@ TODO
 *TODO*
 _*
 !__init__.py
+*.pdf
+*Copy.py

@@ -1,11 +1,12 @@
 import unittest
 import numpy as np
 
-from yams.yams_sympy import kane_fr
-from yams.yams_sympy import kane_fr_alt
-from yams.yams_sympy import kane_frstar
-from yams.yams_sympy import kane_frstar_alt
 from yams.yams_sympy import YAMSInertialBody, YAMSRigidBody
+from yams.yams_kane import kane_fr
+from yams.yams_kane import kane_fr_alt
+from yams.yams_kane import kane_frstar
+from yams.yams_kane import kane_frstar_alt
+from yams.yams_kane  import YAMSKanesMethod 
 
 from sympy import symbols, simplify
 from sympy import diff, Matrix
@@ -100,20 +101,24 @@ class Test(unittest.TestCase):
         MM            = kane.mass_matrix_full
         forcing_vector = kane.forcing_full
 
+        # --- YAMSKane
+        y_kane = YAMSKanesMethod(ref.frame, coordinates, speeds, kdeqs)
+        fr_y, frstar_y  = y_kane.kanes_equations(bodies, loads)
+        #MM            = y_kane.mass_matrix_full
+        #forcing_vector = y_kane.forcing_full
+
         # --- "Manual" Kane
         coordinates = [x,phi_y, psi]
-        frstar_new,MM_new  = kane_frstar(bodies, coordinates, speeds, kdeqs, ref.origin, ref.frame)
+        frstar_new,MM_new,MMFull_new  = kane_frstar(bodies, coordinates, speeds, kdeqs, ref.origin, ref.frame)
         fr_new             = kane_fr(body_loads, speeds, ref.frame)
 
         # --- Kane "alt"
-        frstar_alt, MM_alt = kane_frstar_alt(bodies, coordinates, speeds, kdeqs, ref.frame)
+        frstar_alt, MM_alt,MMFull_alt = kane_frstar_alt(bodies, coordinates, speeds, kdeqs, ref.frame)
         fr_alt            =  kane_fr_alt(loads, coordinates, speeds, kdeqs, ref.frame)
 
         # --- Compare manual Kane with Kane
         DeltaFrStar = simplify(frstar-frstar_new)
         DeltaFr     = simplify(fr-fr_new)
-        #print(DeltaFrStar)
-        #print(DeltaFr)
         self.assertEqual(DeltaFrStar, Matrix([[0],[0],[0]]))
         self.assertEqual(DeltaFr, Matrix([[0],[0],[0]]))
         self.assertEqual(MM_new, kane._k_d)
@@ -124,6 +129,17 @@ class Test(unittest.TestCase):
         self.assertEqual(DeltaFrStar, Matrix([[0],[0],[0]]))
         self.assertEqual(DeltaFr, Matrix([[0],[0],[0]]))
         self.assertEqual(MM_alt, MM_new)
+
+        # --- Compare yams Kane with Kane
+        DeltaFrStar = simplify(frstar-frstar_y)
+        DeltaFr     = simplify(fr-fr_y)
+        self.assertEqual(DeltaFrStar, Matrix([[0],[0],[0]]))
+        self.assertEqual(DeltaFr, Matrix([[0],[0],[0]]))
+        self.assertEqual(y_kane._k_d, kane._k_d)
+        self.assertEqual(y_kane.forcing_full, kane.forcing_full)
+        self.assertEqual(y_kane.mass_matrix, kane.mass_matrix)
+        self.assertEqual(y_kane.mass_matrix_full, kane.mass_matrix_full)
+
 
 
 

@@ -10,14 +10,21 @@ from sympy.physics.mechanics.particle import Particle
 from sympy.physics.mechanics.rigidbody import RigidBody
 from sympy.physics.mechanics.functions import (msubs, find_dynamicsymbols,
                                                _f_list_parser)
+
+from sympy.physics.mechanics import inertia
+from sympy.physics.mechanics import Point
 from sympy.physics.mechanics.linearize import Linearizer
 from sympy.utilities.exceptions import SymPyDeprecationWarning
 from sympy.utilities.iterables import iterable
 
-__all__ = ['KanesMethod']
+from yams.yams_sympy import YAMSFlexibleBody, YAMSRigidBody, coord2vec
 
 
-class KanesMethod(object):
+__all__ = ['YAMSKanesMethod']
+__all__+= ['kane_frstar','kane_fr','kane_fr_alt','kane_frstar_alt']
+
+
+class YAMSKanesMethod(object):
     """Kane's method object.
 
     This object is used to do the "book-keeping" as you go through and form
@@ -274,10 +281,36 @@ class KanesMethod(object):
         if fl is not None and (len(fl) == 0 or not iterable(fl)):
             raise ValueError('Force pairs must be supplied in an '
                 'non-empty iterable or None.')
+        def _my_f_list_parser(fl, ref_frame):
+            """Parses the provided forcelist composed of items of the form (obj, force).
+            Returns a tuple containing:
+                vel_list: The velocity (ang_vel for Frames, vel for Points) in the provided reference frame.
+                f_list: The forces.
+            Used internally in the KanesMethod and LagrangesMethod classes.
+            """
+            genF=[]
+            def flist_iter():
+                for pair in fl:
+                    obj, force = pair
+                    if isinstance(obj, ReferenceFrame):
+                        yield obj.ang_vel_in(ref_frame), force
+                    elif isinstance(obj, Point):
+                        yield obj.vel(ref_frame), force
+                    elif isinstance(obj, YAMSFlexibleBody):
+                        genF.append(force) # TODO
+                    else:
+                        raise TypeError('First entry in each forcelist pair must be a point or frame.')
+            if not fl:
+                vel_list, f_list = (), ()
+            else:
+                unzip = lambda l: list(zip(*l)) if l[0] else [(), ()]
+                vel_list, f_list = unzip(list(flist_iter()))
+            return vel_list, f_list, genF
+
 
         N = self._inertial
         # pull out relevant velocities for constructing partial velocities
-        vel_list, f_list = _f_list_parser(fl, N)
+        vel_list, f_list, genF = _my_f_list_parser(fl, N)
         vel_list = [msubs(i, self._qdot_u_map) for i in vel_list]
         f_list = [msubs(i, self._qdot_u_map) for i in f_list]
 
@@ -301,8 +334,12 @@ class KanesMethod(object):
         self._fr = FR
         return FR
 
-    def _form_frstar(self, bl):
-        """Form the generalized inertia force."""
+    def _form_frstar(self, bl, Mform='TaylorExpanded'):
+        """Form the generalized inertia force.
+
+        Mform: which form to use for flexible body mass matrix: TaylorExpanded or symbolic
+        
+        """
 
         if not iterable(bl):
             raise TypeError('Bodies must be supplied in an iterable.')
@@ -319,24 +356,6 @@ class KanesMethod(object):
                 self._qdot_u_map.items())
         q_ddot_u_map.update(self._qdot_u_map)
 
-        # Fill up the list of partials: format is a list with num elements
-        # equal to number of entries in body list. Each of these elements is a
-        # list - either of length 1 for the translational components of
-        # particles or of length 2 for the translational and rotational
-        # components of rigid bodies. The inner most list is the list of
-        # partial velocities.
-        def get_partial_velocity(body):
-            if isinstance(body, RigidBody):
-                vlist = [body.masscenter.vel(N), body.frame.ang_vel_in(N)]
-            elif isinstance(body, Particle):
-                vlist = [body.point.vel(N),]
-            else:
-                raise TypeError('The body list may only contain either '
-                                'RigidBody or Particle as list elements.')
-            v = [msubs(vel, self._qdot_u_map) for vel in vlist]
-            return partial_velocity(v, self.u, N)
-        partials = [get_partial_velocity(body) for body in bl]
-
         # Compute fr_star in two components:
         # fr_star = -(MM*u' + nonMM)
         o = len(self.u)
@@ -345,34 +364,130 @@ class KanesMethod(object):
         zero_uaux = lambda expr: msubs(expr, uaux_zero)
         zero_udot_uaux = lambda expr: msubs(msubs(expr, udot_zero), uaux_zero)
         for i, body in enumerate(bl):
-            if isinstance(body, RigidBody):
-                M = zero_uaux(body.mass)
+            bodyMM    = zeros(o, o)
+            bodynonMM = zeros(o, 1)
+
+            M = zero_uaux(body.mass)
+            if isinstance(body, YAMSFlexibleBody):
+                P = body.origin
+                I = None
+            else:
+                P = body.masscenter
                 I = zero_uaux(body.central_inertia)
-                vel = zero_uaux(body.masscenter.vel(N))
+            # --- Step 2: Positions and orientation
+            #r = P.pos_from(O_E)
+            #R = N.dcm(body.frame) # from body to inertial
+            # --- Step 3/4: Velocities and accelerations
+            omega = body.frame.ang_vel_in(N)
+            vel = zero_uaux(P.vel(N))
+            acc = zero_udot_uaux(P.acc(N))
+            if not isinstance(body, Particle):
                 omega = zero_uaux(body.frame.ang_vel_in(N))
-                acc = zero_udot_uaux(body.masscenter.acc(N))
-                inertial_force = (M.diff(t) * vel + M * acc)
-                inertial_torque = zero_uaux((I.dt(body.frame) & omega) + msubs(I & body.frame.ang_acc_in(N), udot_zero) + (omega ^ (I & omega)))
+                alpha = omega.diff(t, N)
+            # NOTE: Keep me Alternative: vel from r and omega from identification:
+            #vel_drdt = r.diff(t, N).simplify()
+            #OmSkew = (R.diff(t) *  R.transpose()).simplify()
+            #omega_ident = OmSkew[2,1] * N.x + OmSkew[0,2]*N.y + OmSkew[1,0] * N.z
+            #acc_drdt2 = r.diff(t, N).diff(t,N).simplify()
+            # --- Step 5 Partial velocities
+            # Method 1: use "partial_velocity" function, which returns a vector
+            vel_sub   = msubs(vel, self._qdot_u_map)
+            Jv_vect   = partial_velocity([vel_sub], self.u, N)[0]
+            if not isinstance(body, Particle):
+                omega_sub = msubs(omega, self._qdot_u_map)
+                Jo_vect = partial_velocity([omega_sub], self.u, N)[0]
+            # NOTE: Keep me: Method 2: express everything in ref frame, and use "jacobians"
+            #v  = vel.subs(Omega_Subs).to_matrix(N)
+            #om = omega.subs(Omega_Subs).to_matrix(N)
+            #Jv = v.jacobian(qspeeds)
+            #Jo = om.jacobian(qspeeds)
+
+            if isinstance(body,YAMSRigidBody) or isinstance(body, RigidBody):
+                # --- Mass Matrix 
                 for j in range(o):
-                    tmp_vel = zero_uaux(partials[i][0][j])
-                    tmp_ang = zero_uaux(I & partials[i][1][j])
+                    tmp_vel = Jv_vect[j]      # Jv[:,j]
+                    tmp_ang = I & Jo_vect[j]  # Jo[:,j]
                     for k in range(o):
                         # translational
-                        MM[j, k] += M * (tmp_vel & partials[i][0][k])
+                        bodyMM[j, k] += M * (tmp_vel & Jv_vect[k]) # M * Jv[:,j] dot Jv[:,k]
                         # rotational
-                        MM[j, k] += (tmp_ang & partials[i][1][k])
-                    nonMM[j] += inertial_force & partials[i][0][j]
-                    nonMM[j] += inertial_torque & partials[i][1][j]
+                        bodyMM[j, k] +=     (tmp_ang & Jo_vect[k]) # I dot Jo[:,j] dot Jo[:,k]
+                # --- Full inertial loads
+                inertial_force = (M.diff(t) * vel + M * acc)
+                inertial_torque = zero_uaux((I.dt(body.frame) & omega) + msubs(I & body.frame.ang_acc_in(N), udot_zero) + (omega ^ (I & omega)))
+
+                # NOTE KEEP ME: Alternative formulation using "matrices" 
+                #inertial_force = inertial_force.subs(Omega_Subs)
+                #RIRt  = R*I.to_matrix(body.frame)*R.transpose()
+                #inertial_torque_2 = - RIRt * alpha.to_matrix(N) \
+                #        - coord2vec(om, N).cross( coord2vec(RIRt *om, N)).to_matrix(N)
+                # Computing generatlized force Jv.f + Jo*M
+                for j in range(o):
+                    bodynonMM[j] += inertial_force  & Jv_vect[j]
+                    bodynonMM[j] += inertial_torque & Jo_vect[j]
+            elif isinstance(body,YAMSFlexibleBody):
+                MMloc = body.bodyMassMatrix(form=Mform)
+                body.h_omega = body.bodyQuadraticForce(omega.to_matrix(body.frame), body.q, body.qdot)
+                body.h_elast = body.bodyElasticForce(body.q, body.qdot)
+                inertial_force=0 # Fstar
+                inertial_torque=0 # Tstar
+                inertial_force_coord =MMloc[0:3,0:3] * acc.to_matrix(body.frame) 
+                inertial_force_coord+=MMloc[0:3,3:6] * alpha.to_matrix(body.frame)
+                inertial_force_coord+=MMloc[0:3,6:]  * Matrix(body.qddot)
+                inertial_force_coord+=body.h_omega[0:3,0]
+                inertial_force_coord+=body.h_elast[0:3,0]
+                inertial_torque_coord =MMloc[3:6,0:3] * acc.to_matrix(body.frame) 
+                inertial_torque_coord+=MMloc[3:6,3:6] * alpha.to_matrix(body.frame)
+                inertial_torque_coord+=MMloc[3:6,6:]  * Matrix(body.qddot)
+                inertial_torque_coord+=body.h_omega[3:6,0]
+                inertial_torque_coord+=body.h_elast[3:6,0]
+                inertial_elast_coord =MMloc[6:,0:3] * acc.to_matrix(body.frame) 
+                inertial_elast_coord+=MMloc[6:,3:6] * alpha.to_matrix(body.frame)
+                inertial_elast_coord+=MMloc[6:,6:]  * Matrix(body.qddot)
+                inertial_elast_coord+=body.h_omega[6:,0]
+                inertial_elast_coord+=body.h_elast[6:,0]
+                body.inertial_elast=inertial_elast_coord
+
+                inertial_force  = coord2vec(inertial_force_coord,body.frame) 
+                inertial_torque = coord2vec(inertial_torque_coord,body.frame) 
+
+                # Computing generatlized force Jv.f + Jo*M
+                for j in range(o):
+                    bodynonMM[j] += inertial_force  & Jv_vect[j]
+                    bodynonMM[j] += inertial_torque & Jo_vect[j]
+                    for k in range(len(body.q)):
+                        if self.q[j] == body.q[k]:
+                            bodynonMM[j] +=  inertial_elast_coord[k]
+                bnMMSubs = msubs(bodynonMM, q_ddot_u_map)
+                bodyMM = bnMMSubs.jacobian(self._udot)
             else:
                 M = zero_uaux(body.mass)
                 vel = zero_uaux(body.point.vel(N))
                 acc = zero_udot_uaux(body.point.acc(N))
+                vel_sub   = msubs(vel, qdot_u_map)
+                Jv_vect   = partial_velocity([vel_sub], u, N)[0]
                 inertial_force = (M.diff(t) * vel + M * acc)
                 for j in range(o):
-                    temp = zero_uaux(partials[i][0][j])
+                    tmp_vel = Jv_vect[j]      # Jv[:,j]
                     for k in range(o):
-                        MM[j, k] += M * (temp & partials[i][0][k])
-                    nonMM[j] += inertial_force & partials[i][0][j]
+                        bodyMM[j, k] += M * (tmp_vel & Jv_vect[k]) # M * Jv[:,j] dot Jv[:,k]
+                    bodynonMM[j] += inertial_force & Jv_vect[j]
+            # Perform important substitution and store body contributions
+            body.MM      = msubs(bodyMM, q_ddot_u_map)
+            body.nonMM   = bodynonMM
+
+            # Cumulative MM and nonMM over all bodies
+            MM   +=bodyMM
+            nonMM+=bodynonMM
+            # --- Storing for debug
+            body.acc             = acc
+            body.vel             = vel
+            body.omega           = omega
+            body.inertial_force  = inertial_force
+            body.inertial_torque = inertial_torque
+            body.Jv_vect=Jv_vect
+            body.Jo_vect=Jo_vect
+
         # Compose fr_star out of MM and nonMM
         MM = zero_uaux(msubs(MM, q_ddot_u_map))
         nonMM = msubs(msubs(nonMM, q_ddot_u_map),
@@ -501,7 +616,7 @@ class KanesMethod(object):
         result = linearizer.linearize(**kwargs)
         return result + (linearizer.r,)
 
-    def kanes_equations(self, bodies, loads=None):
+    def kanes_equations(self, bodies, loads=None, Mform='TaylorExpanded'):
         """ Method to form Kane's equations, Fr + Fr* = 0.
 
         Returns (Fr, Fr*). In the case where auxiliary generalized speeds are
@@ -538,7 +653,7 @@ class KanesMethod(object):
             raise AttributeError('Create an instance of KanesMethod with '
                     'kinematic differential equations to use this method.')
         fr = self._form_fr(loads)
-        frstar = self._form_frstar(bodies)
+        frstar = self._form_frstar(bodies, Mform=Mform)
         if self._uaux:
             if not self._udep:
                 km = KanesMethod(self._inertial, self.q, self._uaux,
@@ -654,3 +769,516 @@ class KanesMethod(object):
     @property
     def forcelist(self):
         return self._forcelist
+
+
+
+
+
+# --------------------------------------------------------------------------------}
+# --- Kane's method 
+# --------------------------------------------------------------------------------{
+def _initialize_kindiffeq_matrices(coordinates, speeds, kdeqs, uaux=Matrix()):
+    """Initialize the kinematic differential equation matrices.
+    See sympy.mechanics.kane
+
+    kdeqs: kinematic differential equations
+    """
+    from sympy import solve_linear_system_LU
+
+    if kdeqs:
+        if len(coordinates) != len(kdeqs):
+            raise ValueError('There must be an equal number of kinematic differential equations and coordinates.')
+        coordinates = Matrix(coordinates)
+        kdeqs = Matrix(kdeqs)
+        u     = Matrix(speeds)
+        qdot  = coordinates.diff(dynamicsymbols._t)
+        # Dictionaries setting things to zero
+        u_zero = dict((i, 0) for i in u)
+        uaux_zero = dict((i, 0) for i in uaux)
+        qdot_zero = dict((i, 0) for i in qdot)
+
+        f_k = msubs(kdeqs, u_zero, qdot_zero)
+        k_ku = (msubs(kdeqs, qdot_zero) - f_k).jacobian(u)
+        k_kqdot = (msubs(kdeqs, u_zero) - f_k).jacobian(qdot)
+
+        f_k = k_kqdot.LUsolve(f_k)
+        k_ku = k_kqdot.LUsolve(k_ku)
+        k_kqdot = eye(len(qdot))
+
+        _qdot_u_map = solve_linear_system_LU( Matrix([k_kqdot.T, -(k_ku * u + f_k).T]).T, qdot)
+
+        _f_k = msubs(f_k, uaux_zero)
+        _k_ku = msubs(k_ku, uaux_zero)
+        _k_kqdot = k_kqdot
+    else:
+        _qdot_u_map = None
+        _f_k = Matrix()
+        _k_ku = Matrix()
+        _k_kqdot = Matrix()
+    return _qdot_u_map, _f_k, _k_ku, _k_kqdot
+
+
+
+def kane_frstar_alt(bodies, coordinates, speeds, kdeqs, inertial_frame, uaux=Matrix(), udep=None, Ars=None):
+    """Form the generalized inertia force."""
+    from sympy.core.backend import zeros, Matrix, diff
+    from sympy.core.compatibility import range
+    from sympy.physics.vector import partial_velocity
+    from sympy.physics.mechanics.particle import Particle
+
+    t = dynamicsymbols._t
+    N = inertial_frame
+
+    # Derived inputs
+    q = Matrix(coordinates) # q
+    u = Matrix(speeds) # u
+    udot = u.diff(t)
+    qdot_u_map,_,_,_k_kqdot = _initialize_kindiffeq_matrices(q, u, kdeqs, uaux=Matrix())
+                                                  
+    # Dicts setting things to zero
+    udot_zero = dict((i, 0) for i in udot)
+    uaux_zero = dict((i, 0) for i in uaux)
+    uauxdot   = [diff(i, t) for i in uaux]
+    uauxdot_zero = dict((i, 0) for i in uauxdot)
+    # Dictionary of q' and q'' to u and u'
+    q_ddot_u_map = dict((k.diff(t), v.diff(t)) for (k, v) in qdot_u_map.items())
+    q_ddot_u_map.update(qdot_u_map)
+
+    # Fill up the list of partials: format is a list with num elements
+    # equal to number of entries in body list. Each of these elements is a
+    # list - either of length 1 for the translational components of
+    # particles or of length 2 for the translational and rotational
+    # components of rigid bodies. The inner most list is the list of
+    # partial velocities.
+    def get_partial_velocity(body):
+        if isinstance(body,YAMSRigidBody) or isinstance(body, RigidBody):
+            vlist = [body.masscenter.vel(N), body.frame.ang_vel_in(N)]
+        elif isinstance(body, Particle):
+            vlist = [body.point.vel(N),]
+        elif isinstance(body,YAMSFlexibleBody):
+            print('>>>> FlexibleBody TODO, Jv Jo to partials')
+            vlist=[body.masscenter.vel(N), body.frame.ang_vel_in(N)]
+        else:
+            raise TypeError('The body list may only contain either ' 'RigidBody or Particle as list elements.')
+        v = [msubs(vel, qdot_u_map) for vel in vlist]
+        return partial_velocity(v, u, N)
+
+    partials = [get_partial_velocity(body) for body in bodies]
+
+    # Compute fr_star in two components:
+    # fr_star = -(MM*u' + nonMM)
+    o = len(u)
+    MM = zeros(o, o)
+    nonMM = zeros(o, 1)
+    zero_uaux      = lambda expr: msubs(expr, uaux_zero)
+    zero_udot_uaux = lambda expr: msubs(msubs(expr, udot_zero), uaux_zero)
+    for i, body in enumerate(bodies):
+        bodyMM = zeros(o, o)
+        bodynonMM = zeros(o, 1)
+        if isinstance(body,YAMSRigidBody) or isinstance(body, RigidBody):
+            # Rigid Body (see sympy.mechanics.kane)
+            M     = zero_uaux(       body.mass                )
+            I     = zero_uaux(       body.central_inertia     )
+            vel   = zero_uaux(       body.masscenter.vel(N)   )
+            omega = zero_uaux(       body.frame.ang_vel_in(N) )
+            acc   = zero_udot_uaux(  body.masscenter.acc(N)   )
+            # --- Mas Matrix
+            for j in range(o):
+                tmp_vel = zero_uaux(partials[i][0][j])
+                tmp_ang = zero_uaux(I & partials[i][1][j])
+                for k in range(o):
+                    # translational
+                    bodyMM[j, k] += M * (tmp_vel & partials[i][0][k])
+                    # rotational
+                    bodyMM[j, k] += (tmp_ang & partials[i][1][k])
+            # --- Full inertial loads Matrix
+            inertial_force  = (M.diff(t) * vel + M * acc)
+            inertial_torque = zero_uaux((I.dt(body.frame) & omega) + msubs(I & body.frame.ang_acc_in(N), udot_zero) + (omega ^ (I & omega)))  # "&" = dot, "^"=cross
+            for j in range(o):
+                bodynonMM[j] += inertial_force & partials[i][0][j]
+                bodynonMM[j] += inertial_torque & partials[i][1][j]
+
+        elif isinstance(body,YAMSFlexibleBody):
+            print('>>>> FlexibleBody TODO')
+            M     = zero_uaux(body.mass)
+            #I     = zero_uaux(body.central_inertia)
+            vel   = zero_uaux(body.origin.vel(N))
+            omega = zero_uaux(body.frame.ang_vel_in(N))
+            acc   = zero_udot_uaux(body.origin.acc(N))
+            inertial_force=0 # Fstar  !<<<< TODO
+            inertial_torque=0 # Tstar  !<<<< TODO
+
+        else:
+            # Particles
+            M = zero_uaux(body.mass)
+            vel = zero_uaux(body.point.vel(N))
+            acc = zero_udot_uaux(body.point.acc(N))
+            inertial_force = (M.diff(t) * vel + M * acc)
+            inertial_torque=0 # Tstar
+            for j in range(o):
+                temp = zero_uaux(partials[i][0][j])
+                for k in range(o):
+                    bodyMM[j, k] += M * (temp & partials[i][0][k])
+                bodynonMM[j] += inertial_force & partials[i][0][j]
+
+        # Perform important substitution and store body contributions
+        body.MM_alt     = zero_uaux(msubs(bodyMM, q_ddot_u_map))
+        body.nonMM_alt_bef = bodynonMM
+        #body.nonMM_alt  = msubs(msubs(bodynonMM, q_ddot_u_map), udot_zero, uauxdot_zero, uaux_zero)
+        # Cumulative MM and nonMM over all bodies
+        MM    += bodyMM
+        nonMM += bodynonMM
+        # --- Storing for debug
+        body.acc_alt             = acc
+        body.vel_alt             = vel
+        body.omega_alt           = omega
+        body.inertial_force_alt  = inertial_force
+        body.inertial_torque_alt = inertial_torque
+        body.Jv_vect_alt=partials[i][0]
+        body.Jo_vect_alt=partials[i][1]
+    # End loop on bodies
+    nonMM = msubs(msubs(nonMM, q_ddot_u_map), udot_zero, uauxdot_zero, uaux_zero)
+
+    # Compose fr_star out of MM and nonMM
+    fr_star = -(MM * msubs(Matrix(udot), uauxdot_zero) + nonMM)
+
+    # If there are dependent speeds, we need to find fr_star_tilde
+    if udep:
+        p = o - len(udep)
+        fr_star_ind = fr_star[:p, 0]
+        fr_star_dep = fr_star[p:o, 0]
+        fr_star = fr_star_ind + (Ars.T * fr_star_dep)
+        # Apply the same to MM
+        MMi = MM[:p, :]
+        MMd = MM[p:o, :]
+        MM = MMi + (Ars.T * MMd)
+
+    MM_full= mass_matrix_full(MM,_k_kqdot)
+    #self._bodylist = bodies
+    #self._frstar = fr_star
+    #self._k_d = MM
+    #self._f_d = -msubs(self._fr + self._frstar, udot_zero)
+    return fr_star, MM, MM_full
+
+def kane_frstar(bodies, coordinates, speeds, kdeqs, origin, inertial_frame, Omega_Subs=[(None,None)], Mform='TaylorExpanded'):
+    """ 
+    coordinates "q"
+    speeds      "u"
+    kdeqs:   relates qdot and udot
+    
+    """ 
+    from sympy.physics.vector import partial_velocity
+
+    nq = len(coordinates)
+    MM    = zeros(nq, nq)
+    nonMM = zeros(nq, 1)
+
+    O_E = origin
+    N = inertial_frame
+    t = dynamicsymbols._t
+
+    # Derived inputs
+    q = Matrix(coordinates) # q
+    u = Matrix(speeds) # u
+    udot = u.diff(t)
+    qspeeds = q.diff(t)
+    qacc = qspeeds.diff(t)
+    qdot_u_map,_,_,_k_kqdot = _initialize_kindiffeq_matrices(q, u, kdeqs, uaux=Matrix())
+
+    # Dicts setting things to zero
+    udot_zero = dict((i, 0) for i in udot)
+    qdot_zero = dict((diff(qd,t), 0) for qd in qspeeds)
+    # Dictionary of q' and q'' to u and u'
+    q_ddot_u_map = dict((k.diff(t), v.diff(t)) for (k, v) in qdot_u_map.items())
+    q_ddot_u_map.update(qdot_u_map)
+
+    for i,body in enumerate(bodies):
+        bodyMM    = zeros(nq, nq)
+        bodynonMM = zeros(nq, 1)
+        M     = body.mass
+        #print(type(body),isinstance(body, YAMSFlexibleBody), isinstance(body, YAMSRigidBody), isinstance(body, YAMSBody), isinstance(body, SympyBody))
+        if isinstance(body, YAMSFlexibleBody):
+            P = body.origin
+            I = None
+        else:
+            P = body.masscenter
+            I = body.central_inertia
+
+        # --- Step 2: Positions and orientation
+        r = P.pos_from(O_E)
+        R = N.dcm(body.frame) # from body to inertial
+
+        # --- Step 3/4: Velocities and accelerations
+        vel   = P.vel(N)
+        omega = body.frame.ang_vel_in(N)
+        acc   = P.acc(N)
+        alpha = omega.diff(t, N)
+        # NOTE: Keep me Alternative: vel from r and omega from identification:
+        #vel_drdt = r.diff(t, N).simplify()
+        #OmSkew = (R.diff(t) *  R.transpose()).simplify()
+        #omega_ident = OmSkew[2,1] * N.x + OmSkew[0,2]*N.y + OmSkew[1,0] * N.z
+        #acc_drdt2 = r.diff(t, N).diff(t,N).simplify()
+
+        # --- Step 5 Partial velocities
+        # Method 1: use "partial_velocity" function, which returns a vector
+        vel_sub   = msubs(vel, qdot_u_map)
+        Jv_vect   = partial_velocity([vel_sub], u, N)[0]
+        omega_sub = msubs(omega, qdot_u_map)
+        Jo_vect = partial_velocity([omega_sub], u, N)[0]
+        # NOTE: Keep me: Method 2: express everything in ref frame, and use "jacobians"
+        #v  = vel.subs(Omega_Subs).to_matrix(N)
+        #om = omega.subs(Omega_Subs).to_matrix(N)
+        #Jv = v.jacobian(qspeeds)
+        #Jo = om.jacobian(qspeeds)
+
+        # --- Step 6 Inertia forces
+        if isinstance(body,YAMSRigidBody) or isinstance(body, SympyRigidBody):
+            # --- Mass Matrix 
+            for j in range(nq):
+                tmp_vel = Jv_vect[j]      # Jv[:,j]
+                tmp_ang = I & Jo_vect[j]  # Jo[:,j]
+                for k in range(nq):
+                    # translational
+                    bodyMM[j, k] += M * (tmp_vel & Jv_vect[k]) # M * Jv[:,j] dot Jv[:,k]
+                    # rotational
+                    bodyMM[j, k] +=     (tmp_ang & Jo_vect[k]) # I dot Jo[:,j] dot Jo[:,k]
+
+            # --- Full inertial loads
+            inertial_force  = (M.diff(t) * vel + M * acc) # "Fstar"
+            inertial_torque = (I.dt(body.frame) & omega) + msubs(I & body.frame.ang_acc_in(N), udot_zero) + (omega ^ (I & omega))  # "&" = dot, "^"=cross
+
+            # NOTE KEEP ME: Alternative formulation using "matrices" 
+            #inertial_force = inertial_force.subs(Omega_Subs)
+            #RIRt  = R*I.to_matrix(body.frame)*R.transpose()
+            #inertial_torque_2 = - RIRt * alpha.to_matrix(N) \
+            #        - coord2vec(om, N).cross( coord2vec(RIRt *om, N)).to_matrix(N)
+
+            # Computing generatlized force Jv.f + Jo*M
+            for j in range(nq):
+                bodynonMM[j] += inertial_force  & Jv_vect[j]
+                bodynonMM[j] += inertial_torque & Jo_vect[j]
+            # Alternative:
+            #frstar_t+ = Jv.transpose() * inertial_force.to_matrix(N)
+            #frstar_o+ = Jo.transpose() * inertial_torque
+
+        elif isinstance(body,YAMSFlexibleBody):
+            MMloc = body.bodyMassMatrix(form=Mform)
+            body.h_omega = body.bodyQuadraticForce(omega.to_matrix(body.frame), body.q, body.qdot)
+            body.h_elast = body.bodyElasticForce(body.q, body.qdot)
+            inertial_force=0 # Fstar
+            inertial_torque=0 # Tstar
+            inertial_force_coord =MMloc[0:3,0:3] * acc.to_matrix(body.frame) 
+            inertial_force_coord+=MMloc[0:3,3:6] * alpha.to_matrix(body.frame)
+            inertial_force_coord+=MMloc[0:3,6:]  * Matrix(body.qddot)
+            inertial_force_coord+=body.h_omega[0:3,0]
+            inertial_force_coord+=body.h_elast[0:3,0]
+            inertial_torque_coord =MMloc[3:6,0:3] * acc.to_matrix(body.frame) 
+            inertial_torque_coord+=MMloc[3:6,3:6] * alpha.to_matrix(body.frame)
+            inertial_torque_coord+=MMloc[3:6,6:]  * Matrix(body.qddot)
+            inertial_torque_coord+=body.h_omega[3:6,0]
+            inertial_torque_coord+=body.h_elast[3:6,0]
+            inertial_elast_coord =MMloc[6:,0:3] * acc.to_matrix(body.frame) 
+            inertial_elast_coord+=MMloc[6:,3:6] * alpha.to_matrix(body.frame)
+            inertial_elast_coord+=MMloc[6:,6:]  * Matrix(body.qddot)
+            inertial_elast_coord+=body.h_omega[6:,0]
+            inertial_elast_coord+=body.h_elast[6:,0]
+            body.inertial_elast=inertial_elast_coord
+
+            inertial_force  = coord2vec(inertial_force_coord,body.frame) 
+            inertial_torque = coord2vec(inertial_torque_coord,body.frame) 
+
+            # Computing generatlized force Jv.f + Jo*M
+            for j in range(nq):
+                bodynonMM[j] += inertial_force  & Jv_vect[j]
+                bodynonMM[j] += inertial_torque & Jo_vect[j]
+                for k in range(len(body.q)):
+                    if q[j] == body.q[k]:
+                        bodynonMM[j] +=  inertial_elast_coord[k]
+            bnMMSubs = msubs(bodynonMM, q_ddot_u_map)
+            bodyMM = bnMMSubs.jacobian(udot)
+
+        else:
+            raise Exception('Unsupported body type: {}'.format(type(body)))
+
+        # Perform important substitution and store body contributions
+        body.MM      = msubs(bodyMM, q_ddot_u_map)
+        body.nonMM   = bodynonMM
+
+        # Cumulative MM and nonMM over all bodies
+        MM   +=bodyMM
+        nonMM+=bodynonMM
+        # --- Storing for debug
+        body.acc             = acc
+        body.vel             = vel
+        body.omega           = omega
+        body.inertial_force  = inertial_force
+        body.inertial_torque = inertial_torque
+        body.Jv_vect=Jv_vect
+        body.Jo_vect=Jo_vect
+    # End loop on bodies
+    # NOTE: substitution needs to be done at the end
+    nonMM  = msubs(msubs(nonMM, q_ddot_u_map), udot_zero) #, uauxdot_zero, uaux_zero)
+
+    # Compose fr_star out of MM and nonMM
+    fr_star = -(MM *Matrix(udot) + nonMM)
+
+    MM_full= mass_matrix_full(MM,_k_kqdot)
+
+    return fr_star, MM, MM_full
+
+# --------------------------------------------------------------------------------}
+# --- Kane fr 
+# --------------------------------------------------------------------------------{
+def kane_fr_alt(loads, coordinates, speeds, kdeqs, inertial_frame, uaux=Matrix(), udep=None):
+    """
+      - For each force: compute the velocity at the point of application, v_P, and then do
+        fr =  [d v/ dqdot]^t F
+      - For each moment: compute the angular velocity of the frame (in E)
+        fr =  [d om/ dqdot]^t M
+    """
+    from sympy.physics.vector import partial_velocity
+ 
+
+    def _f_list_parser(fl, ref_frame):
+        """Parses the provided forcelist composed of items of the form (obj, force).
+        Returns a tuple containing:
+            vel_list: The velocity (ang_vel for Frames, vel for Points) in the provided reference frame.
+            f_list: The forces.
+        Used internally in the KanesMethod and LagrangesMethod classes.
+        """
+        def flist_iter():
+            for pair in fl:
+                obj, force = pair
+                if isinstance(obj, ReferenceFrame):
+                    yield obj.ang_vel_in(ref_frame), force
+                elif isinstance(obj, Point):
+                    yield obj.vel(ref_frame), force
+                else:
+                    raise TypeError('First entry in each forcelist pair must be a point or frame.')
+        if not fl:
+            vel_list, f_list = (), ()
+        else:
+            unzip = lambda l: list(zip(*l)) if l[0] else [(), ()]
+            vel_list, f_list = unzip(list(flist_iter()))
+        return vel_list, f_list
+
+    """
+    Form the generalized active force.
+        See _form_fr in sympy.mechanics
+    """
+    N = inertial_frame
+    # Derived inputs
+    speeds = Matrix(speeds) # u
+    qdot_u_map,_,_,_k_kqdot = _initialize_kindiffeq_matrices(coordinates, speeds, kdeqs, uaux=Matrix())
+    
+    # pull out relevant velocities for constructing partial velocities
+    vel_list, f_list = _f_list_parser(loads, N)
+    vel_list = [msubs(i, qdot_u_map) for i in vel_list]
+    f_list   = [msubs(i, qdot_u_map) for i in f_list]
+
+    # Fill Fr with dot product of partial velocities and forces
+    o = len(speeds)
+    b = len(f_list)
+    FR = zeros(o, 1)
+    partials = partial_velocity(vel_list, speeds, N)
+    for i in range(o):
+        FR[i] = sum(partials[j][i] & f_list[j] for j in range(b))
+
+    # In case there are dependent speeds
+    if udep:
+        p = o - len(udep)
+        FRtilde = FR[:p, 0]
+        FRold = FR[p:o, 0]
+        FRtilde += Ars.T * FRold
+        FR = FRtilde
+    #self._forcelist = loads
+    #self._fr = FR
+    return FR
+
+
+def kane_fr(body_loads, speeds, inertial_frame):
+    """
+    Compute Kane's "fr" terms, using a list of bodies and external loads
+
+    For each body:  fr = Jv * F@refP  + Jo * M
+    where Jv and Jo are the jacoban of the linear velocity of the point (for a force) and angular velocity of the frame (for a moment). The point "refP" should be the one used in the calculation of Jv (typically the center of mass for rigid body)
+
+    Right now, Jv, and Jo are computed when calling kane_frstar...
+
+    Alternatively (see kane_fr_alt and _form_fr):
+      - For each force: compute the velocity at the point of application, v_P, and then do
+        fr =  [d v/ dqdot]^t F
+      - For each moment: compute the angular velocity of the frame (in E)
+        fr =  [d om/ dqdot]^t M
+
+    INPUTS:
+        body_loads: a list of tuples of the form  (body, (point_or_frame, force_or_moment ) )
+            The tuples (point_or_frame, force_or_moment) are the ones needed when calling sympy's kane
+            For instance:
+               body_loads = [
+                    (nac, (N        , Thrust*N.x)),
+                    (nac, (nac.frame, Qaero*N.x ))
+                    ]
+        
+    """
+    import sympy.physics.vector as vect
+
+    fr_t = zeros(len(speeds), 1)
+    fr_o = zeros(len(speeds), 1)
+
+    N = inertial_frame
+
+    for bl in body_loads:
+        body, (point_or_frame, force_or_moment) = bl
+        if not hasattr(body,'Jv_vect') or not hasattr(body, 'Jo_vect'):
+            raise Exception('Jacobians matrices need to be computed for body {}. (Call frstart first)'.format(body.name))
+        if isinstance(point_or_frame, ReferenceFrame):
+            # Moment and frame
+            Moment = force_or_moment
+            for j in range(len(speeds)):
+                fr_o[j] += body.Jo_vect[j] & Moment # Jo^t * M
+            pass
+        else:
+            # Force and point
+            Force = force_or_moment
+            point = point_or_frame
+            r = point.pos_from(body.masscenter)
+            for j in range(len(speeds)):
+                fr_t[j] += body.Jv_vect[j] & Force  # Jv^t * F
+            # Need to add moment if r/=0
+            for j in range(len(speeds)):
+                fr_o[j] += body.Jo_vect[j] & (vect.cross( r, Force)) # Jo^t * M
+    return fr_t+fr_o
+
+
+
+# --------------------------------------------------------------------------------}
+# --- Mass matrix and forcing 
+# --------------------------------------------------------------------------------{
+def mass_matrix_full(MM,k_kqdot):
+    """The mass matrix of the system, augmented by the kinematic
+    differential equations.
+    x'= [q'; u']
+    """
+    n = MM.shape[0]
+    o = k_kqdot.shape[0]
+    return ((k_kqdot).row_join(zeros(n, o))).col_join((zeros(o, n)).row_join(MM))
+
+def forcing(fr, frstar, speeds):
+    """The forcing vector of the system."""
+    u = Matrix(speeds) # u
+    udot = u.diff(dynamicsymbols._t)
+    udot_zero = dict((i, 0) for i in udot)
+    _f_d = -msubs(fr + frstar, udot_zero)
+    return -Matrix([_f_d])
+
+def forcing_full(fr, frstar, coordinates, speeds, kdeqs):
+    """The forcing vector of the system, augmented by the kinematic
+    differential equations.
+    x'= [q'; u']
+    """
+    _f_d = -forcing(fr, frstar, speeds)
+    _, _f_k, _k_ku, _= _initialize_kindiffeq_matrices(coordinates, speeds, kdeqs)
+    f1 = _k_ku * Matrix(speeds) +_f_k
+    return -Matrix([f1, _f_d])
+# 

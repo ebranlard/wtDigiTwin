@@ -22,6 +22,7 @@ def vec_interp(t,vTime,vF):
     return F
 
 def B_interp(t,M,vTime,vF):
+    """ Interpolate B-vector from loads known at discrete values (vTime, vF) at a given time `t` """
     nDOF=len(vF)
     B = np.zeros((2*nDOF,1))
     F = vec_interp(t,vTime,vF)
@@ -29,6 +30,7 @@ def B_interp(t,M,vTime,vF):
     return B
 
 def B_reg(t,M,F):
+    """ Return B vector from loads at time t and mass matrix """
     nDOF=len(F)
     B = np.zeros((2*nDOF,1))
     B[nDOF:,0] = np.dot(inv(M),F)

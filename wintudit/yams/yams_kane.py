@@ -17,7 +17,7 @@ from sympy.physics.mechanics.linearize import Linearizer
 from sympy.utilities.exceptions import SymPyDeprecationWarning
 from sympy.utilities.iterables import iterable
 
-from yams.yams.yams_sympy import YAMSFlexibleBody, YAMSRigidBody, coord2vec
+from wintudit.yams.yams_sympy import YAMSFlexibleBody, YAMSRigidBody, coord2vec
 
 
 __all__ = ['YAMSKanesMethod']

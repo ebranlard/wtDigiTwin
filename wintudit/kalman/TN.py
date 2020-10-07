@@ -3,7 +3,7 @@ from .kalman import *
 from .kalmanfilter import KalmanFilter
 from .filters import moving_average
 from ws_estimator.tabulated import TabulatedWSEstimator
-import yams
+import wintudit
 from yams.TNSB_FAST import FASTmodel2TNSB
 
 # --- External dependencies!

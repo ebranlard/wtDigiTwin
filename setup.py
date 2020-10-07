@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages
 
 setup(
-    name='yams',
+    name='wintudit',
     version='1.0',
     description='Yet Another Multibody Solver - Stuctural dynamics toolsc',
     url='http://github.com/ebranlard/yams/',

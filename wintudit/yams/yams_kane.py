@@ -2,10 +2,14 @@ from __future__ import print_function, division
 
 from sympy.core.backend import zeros, Matrix, diff, eye
 from sympy import solve_linear_system_LU
-from sympy.core.compatibility import range
+try:
+    from sympy.core.compatibility import range
+except:
+    pass
 from sympy.utilities import default_sort_key
-from sympy.physics.vector import (ReferenceFrame, dynamicsymbols,
-                                  partial_velocity)
+from sympy.physics.vector import (ReferenceFrame, dynamicsymbols)
+                             
+from sympy.physics.vector import partial_velocity
 from sympy.physics.mechanics.particle import Particle
 from sympy.physics.mechanics.rigidbody import RigidBody
 from sympy.physics.mechanics.functions import (msubs, find_dynamicsymbols,
@@ -821,10 +825,6 @@ def _initialize_kindiffeq_matrices(coordinates, speeds, kdeqs, uaux=Matrix()):
 
 def kane_frstar_alt(bodies, coordinates, speeds, kdeqs, inertial_frame, uaux=Matrix(), udep=None, Ars=None):
     """Form the generalized inertia force."""
-    from sympy.core.backend import zeros, Matrix, diff
-    from sympy.core.compatibility import range
-    from sympy.physics.vector import partial_velocity
-    from sympy.physics.mechanics.particle import Particle
 
     t = dynamicsymbols._t
     N = inertial_frame

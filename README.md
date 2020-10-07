@@ -29,7 +29,7 @@ The repository contains a set of small packages:
 - fast: tools to handle OpenFAST models, in particular a linear OpenFAST model
 - fem: Finite Element Method tools (beams)
 - kalman: kalman filter
-- mech\_system: tools for mechanical systems (M,C,K matrices), eigenvalue analysis, time integration
+- system: tools for dydnamic systems (e.g. LTI, state space) and mechanical systems (M,C,K matrices), eigenvalue analysis, time integration
 - ode: tools for time integration of ODE
 - ws\_estimator: wind speed estimator for wind energy based on tabulated Cp Ct
 

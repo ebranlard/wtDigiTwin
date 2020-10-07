@@ -32,7 +32,7 @@ global nit; nit=0
 %% Main Parameters
 % --- Main flags
 bPlotModes      = logical(0)    ;
-bCBReduction    = logical(1)    ;
+bCBReduction    = logical(0)    ;
 bUseSoilElement = logical(0)    ;
 BC              = 'clamped-free'; % Boundary condition: free-free or clamped-free
 % BC              = 'free-free'   ; % Boundary condition: free-free or clamped-free
@@ -44,12 +44,14 @@ nModesCB        = 6             ;
 bSoilAsForce    = logical(1)    ; % Insert soil contribution as a force or in the stiffness matrix
 dx_soil         = 0.01          ; % If using a "soil" element 
 % --- Model 
-nel             = 20    ;
+nel             = 2    ;
 tEnd            = 20    ;
-sIntegration     ='Newmark';
+% sIntegration     ='Newmark';
 % sIntegration     ='RK4';
-% sIntegration     ='ode23';
-dt              = 0.005 ; % Works with Newmark integration, with or without soil, as long as soil is not in force
+sIntegration     ='ode23';
+% sIntegration     ='ode45';
+% dt              = 0.005 ; % Works with Newmark integration, with or without soil, as long as soil is not in force
+dt              = 0.1 ; % Works with Newmark integration, with or without soil, as long as soil is not in force
 % dt              = 0.000005         ; % Works with Newmark integration
 % dt              = 0.000001       ; % Works for RK4 without CB reduction
 % dt              = 0.0005       ; % Works for RK4 with CB reduction
@@ -265,6 +267,8 @@ elseif isequal(sIntegration,'RK4')
     [vt,Y] = fodeRK4(@(t,y)fTowerTopYDot(t,y,M_L,M_U,Kr,Dr,iTT, @fTowerTopExcitation, Ke_soil,Isoil),vt,zeros(2*nDOF_tot,1));
 elseif isequal(sIntegration,'ode23')
     [vt,Y] = ode23(@(t,y)fTowerTopYDot(t,y,M_L,M_U,Kr,Dr,iTT, @fTowerTopExcitation, Ke_soil,Isoil),vt,zeros(2*nDOF_tot,1));
+elseif isequal(sIntegration,'ode45')
+    [vt,Y] = ode45(@(t,y)fTowerTopYDot(t,y,M_L,M_U,Kr,Dr,iTT, @fTowerTopExcitation, Ke_soil,Isoil),vt,zeros(2*nDOF_tot,1));
 end
 toc();
 

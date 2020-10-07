@@ -1,12 +1,12 @@
 import unittest
 import numpy as np
 
-from yams.yams_sympy import YAMSInertialBody, YAMSRigidBody
-from yams.yams_kane import kane_fr
-from yams.yams_kane import kane_fr_alt
-from yams.yams_kane import kane_frstar
-from yams.yams_kane import kane_frstar_alt
-from yams.yams_kane  import YAMSKanesMethod 
+from yams.yams.yams_sympy import YAMSInertialBody, YAMSRigidBody
+from yams.yams.yams_kane import kane_fr
+from yams.yams.yams_kane import kane_fr_alt
+from yams.yams.yams_kane import kane_frstar
+from yams.yams.yams_kane import kane_frstar_alt
+from yams.yams.yams_kane  import YAMSKanesMethod 
 
 from sympy import symbols, simplify
 from sympy import diff, Matrix

@@ -444,6 +444,7 @@ class BeamBody(Body):
 class UniformBeamBody(BeamBody):
     def __init__(B, Name, nShapes, nSpan, L, EI0, m, Mtop=0, jxxG=None, GKt=None, bAxialCorr=True, bCompatibility=False, bStiffnessFromGM=False, bStiffening=True, gravity=None, main_axis='x'):
 
+        import yams.beams
         import yams.beams.theory as bt
         if jxxG is None:
             jxxG=0

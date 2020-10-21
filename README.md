@@ -1,9 +1,8 @@
-[![Build Status](https://travis-ci.org/ebranlard/yams.svg?branch=master)](https://travis-ci.org/ebranlard/yams)
+[![Build Status](https://travis-ci.org/ebranlard/yams.svg?branch=master)](https://travis-ci.org/ebranlard/wtDigiTwin)
 
 # wtDigiTwin
 A digital twin model for wind turbine.
 Contains a set of structrual dynamics tools, beam theory, FEM and more.
-
 
 
 Applications were presented in:
@@ -18,7 +17,6 @@ The structural model rely wither on OpenFAST linearizations or on the YAMS model
 
 
 
-
 ## QuickStart
 Download, install dependencies and package:
 ```bash
@@ -28,6 +26,10 @@ python -m pip install --user -r requirements.txt
 python -m pip install -e .      # install
 python -m unittest discover -v  # run test
 ```
+
+## Examples
+Simple working examples are provided in the example directory.
+
 
 ## Packages
 The repository contains a set of small packages:
@@ -45,6 +47,9 @@ The repository contains a set of small packages:
 Some of the packages have dependency with the [weio](http://github.com/ebranlard/weio/) library to read and write files.
 
 
+## How to cite:
 
+- Branlard,E, Giardina, D., Brown, C. S. , *Augmented Kalman filter with a reduced mechanical model to estimate tower loads on a land-based wind turbine: a step towards digital-twin simulations*, 2020 [link](https://doi.org/10.5194/wes-5-1155-2020)
 
+- Branlard,E, Jonkman, J., Dana, S., Doubrawa, P., *A digital twin based on OpenFAST linearizations for real-time load and fatigue estimation of land-based turbines*, 2020 [link](https://iopscience.iop.org/article/10.1088/1742-6596/1618/2/022030)
 

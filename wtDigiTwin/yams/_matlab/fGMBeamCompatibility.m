@@ -60,7 +60,7 @@ end
 
 [MMG_d0]= fGMBeamStandalone              (s_G_d0 ,s_span,m,jxxG,PhiUG,PhiV,IW,IW_xm,bOrth,true,V_tot);
 
-%% HACK to get results like Flex
+%% compability changes
 if isequal(Method,'ShapeIntegrals_UG_G0') || isequal(Method,'ShapeIntegralsStandalone_UG_G0')
     MMH=MMG_SI;
     nDOF=size(MMH,2);
@@ -82,7 +82,7 @@ if isequal(Method,'ShapeIntegrals_UG_G0') || isequal(Method,'ShapeIntegralsStand
     MM=MMH;
 elseif isequal(Method,'DirectIntegration_UG_G_d0')
     MMH_d0=MMG_d0;
-    % HACK compatibility - constant 5-6
+    % compatibility - constant 5-6
     MMH_d0(5,6)=0; MMH_d0(6,5)=0;
     MMH_d0(6,6)=Imom; % Annoying
     MMH_d0(5,5)=MMH_d0(6,6);

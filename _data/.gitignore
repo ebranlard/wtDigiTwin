@@ -1,0 +1,11 @@
+NREL5MW_CPLambdaPitch
+NREL5MW_Linearizations
+kalman/*
+wsest/*
+*.exe
+*.dll
+*.outb
+*.out
+*.sum
+*.echo
+

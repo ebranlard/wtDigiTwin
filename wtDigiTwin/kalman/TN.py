@@ -2,9 +2,9 @@ import numpy as np
 from .kalman import *
 from .kalmanfilter import KalmanFilter
 from .filters import moving_average
-from ws_estimator.tabulated import TabulatedWSEstimator
 import wtDigiTwin
-from yams.TNSB_FAST import FASTmodel2TNSB
+from wtDigiTwin.ws_estimator.tabulated import TabulatedWSEstimator
+from wtDigiTwin.yams.TNSB_FAST import FASTmodel2TNSB
 
 # --- External dependencies!
 import welib.fastlib as fastlib

@@ -2,13 +2,13 @@ import numpy as np
 from .kalman import *
 from .kalmanfilter import KalmanFilter
 from .filters import moving_average
-from ws_estimator.tabulated import TabulatedWSEstimator
-import yams
-from yams.TNSB_FAST import FASTmodel2TNSB
-from fast.linmodel import FASTLinModel
+
+from wtDigiTwin.ws_estimator.tabulated import TabulatedWSEstimator
+from wtDigiTwin.yams.TNSB_FAST import FASTmodel2TNSB
+from wtDigiTwin.fast.linmodel import FASTLinModel
+import wtDigiTwin.fast.fastlib as fastlib # latest fastlib is found at https://github.com/ebranlard/welib
 
 # --- External dependencies!
-import welib.fastlib as fastlib
 import weio
 
 #          'WS':'Wind1VelX', 'pitch':'BldPitch1','TTacc':'NcIMUTAxs'}

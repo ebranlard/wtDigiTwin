@@ -13,10 +13,10 @@ from sympy import cos,sin, expand_trig
 from sympy import trigsimp
 from sympy import simplify
 
-from wintudit.yams.yams_sympy import colvec, R_x, R_y, R_z, cross
-from wintudit.yams.yams_sympy import GroundBody
-from wintudit.yams.yams_sympy import BeamBody
-from wintudit.yams.yams_sympy import RigidBody
+from wtDigiTwin.yams.yams_sympy import colvec, R_x, R_y, R_z, cross
+from wtDigiTwin.yams.yams_sympy import GroundBody
+from wtDigiTwin.yams.yams_sympy import BeamBody
+from wtDigiTwin.yams.yams_sympy import RigidBody
 
 
 init_printing(use_unicode=False, wrap_line=False, no_global=True)

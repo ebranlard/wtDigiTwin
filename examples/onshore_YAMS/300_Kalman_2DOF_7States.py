@@ -12,11 +12,11 @@ import os
 import weio # https://github.com/ebranlard/weio
 
 from wtDigiTwin.kalman.TN import KalmanFilterTN, KalmanFilterTNSim
-from wtDigiTwin.ext_tools.colors import *
-from wtDigiTwin.ext_tools.figure import *
-from wtDigiTwin.ext_tools.tictoc import Timer
-from wtDigiTwin.ext_tools.clean_exceptions import *
-from wtDigiTwin.ext_tools.fatigue import eq_load
+from wtDigiTwin.tools.colors import *
+from wtDigiTwin.tools.figure import *
+from wtDigiTwin.tools.tictoc import Timer
+from wtDigiTwin.tools.clean_exceptions import *
+from wtDigiTwin.tools.fatigue import eq_load
 
 # --- General Parameters and State specific parameters
 bThrustInStates=True

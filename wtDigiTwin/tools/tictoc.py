@@ -39,9 +39,11 @@ def pretty_time(t):
 
 class Timer(object):
     """ Time a set of commands, as a context manager
-    with Timer('A name'):
-        cmd1
-        cmd2
+    usage:
+
+        with Timer('A name'):
+            cmd1
+            cmd2
     """
     def __init__(self, name=None):
         self.name = name

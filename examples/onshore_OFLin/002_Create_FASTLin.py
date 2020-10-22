@@ -11,7 +11,7 @@ import weio # https://github.com/ebranlard/weio
 # Local
 # from helper_functions import *
 from wtDigiTwin.fast.fastlinfiles import FASTLin
-from wtDigiTwin.ext_tools.clean_exceptions import *
+from wtDigiTwin.tools.clean_exceptions import *
 
 # --- Script parameters
 bLoadAll=True

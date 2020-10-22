@@ -13,8 +13,8 @@ import os
 from kalman_models import KalmanModel
 from wtDigiTwin.kalman.TN    import KalmanFilterTN, KalmanFilterTNSim
 from wtDigiTwin.kalman.TNLin import KalmanFilterTNLin, KalmanFilterTNLinSim
-from wtDigiTwin.ext_tools.fatigue import eq_load
-from wtDigiTwin.ext_tools.tictoc import Timer
+from wtDigiTwin.tools.fatigue import eq_load
+from wtDigiTwin.tools.tictoc import Timer
 
 
 # --- General Parameters and State specific parameters

@@ -5,7 +5,7 @@ import numpy as np
 import os
 import weio # https://github.com/ebranlard/weio
 import wtDigiTwin.fast.fastlib as fastlib # latest fastlib is found in https://github.com/ebranlard/welib
-from  wtDigiTwin.ext_tools.clean_exceptions import *
+from  wtDigiTwin.tools.clean_exceptions import *
 # --- Parameters for this script
 main_file   = 'Main_Onshore_OF2.fst'         # Main file in ref_dir, used as a template
 ref_dir     = '../../_data/NREL5MW/'         # Folder where the fast input files are located (will be copied)

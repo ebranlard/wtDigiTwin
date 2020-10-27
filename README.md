@@ -1,4 +1,4 @@
-[![Build Status](https://travis-ci.org/ebranlard/yams.svg?branch=master)](https://travis-ci.org/ebranlard/wtDigiTwin)
+[![Build Status](https://travis-ci.com/ebranlard/wtDigitwin.svg?branch=master)](https://travis-ci.com/ebranlard/wtDigiTwin)
 
 # wtDigiTwin
 A digital twin model for wind turbine. Contains a set of structrual dynamics tools, beam theory, FEM and more.
